@@ -29,9 +29,11 @@
 //Standard support
 #include <Arduino.h>
 #include <Print.h>
+#include "TFT_Runtime.h"  // Include runtime configuration header
 #if !defined (TFT_PARALLEL_8_BIT) && !defined (RP2040_PIO_INTERFACE)
   #include <SPI.h>
 #endif
+
 /***************************************************************************************
 **                         Section 2: Load library and processor specific header files
 ***************************************************************************************/
@@ -430,6 +432,7 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
  public:
 
   TFT_eSPI(int16_t _W = TFT_WIDTH, int16_t _H = TFT_HEIGHT);
+  TFT_eSPI(const TFT_Runtime::Config& config, int16_t _W = TFT_WIDTH, int16_t _H = TFT_HEIGHT);
 
   // init() and begin() are equivalent, begin() included for backwards compatibility
   // Sketch defined tab colour option is for ST7735 displays only
@@ -835,8 +838,10 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
   uint8_t  decoderState = 0;   // UTF8 decoder state        - not for user access
   uint16_t decoderBuffer;      // Unicode code-point buffer - not for user access
 
- //--------------------------------------- private ------------------------------------//
- private:
+  TFT_Runtime::Config _runtime_config; // Runtime configuration
+
+ //-------------------------------------- protected ----------------------------------//
+ protected:
            // Legacy begin and end prototypes - deprecated TODO: delete
   void     spi_begin();
   void     spi_end();
@@ -904,7 +909,6 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
 
  //-------------------------------------- protected ----------------------------------//
  protected:
-
   //int32_t  win_xe, win_ye;          // Window end coords - not needed
 
   int32_t  _init_width, _init_height; // Display w/h as input, used by setRotation()
