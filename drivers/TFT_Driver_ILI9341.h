@@ -1,7 +1,7 @@
 #ifndef _TFT_DRIVER_ILI9341_H_
 #define _TFT_DRIVER_ILI9341_H_
 
-#include "../TFT_Driver_Base.h"
+#include "TFT_Driver_Base.h"
 
 namespace TFT_Runtime {
 

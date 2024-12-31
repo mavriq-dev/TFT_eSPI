@@ -1,14 +1,14 @@
 #include <SPI.h>
-#include "TFT_Driver_ILI9341.h"
+#include "TFT_Driver_ILI9486.h"
 
 namespace TFT_Runtime {
 
-TFT_Driver_ILI9341::TFT_Driver_ILI9341(Config& config) : TFT_Driver_Base(config) {
-    _width = ILI9341_TFTWIDTH;
-    _height = ILI9341_TFTHEIGHT;
+TFT_Driver_ILI9486::TFT_Driver_ILI9486(Config& config) : TFT_Driver_Base(config) {
+    _width = ILI9486_TFTWIDTH;
+    _height = ILI9486_TFTHEIGHT;
 }
 
-void TFT_Driver_ILI9341::init() {
+void TFT_Driver_ILI9486::init() {
     // Hardware reset
     if (config.rst_pin >= 0) {
         pinMode(config.rst_pin, OUTPUT);
@@ -20,46 +20,87 @@ void TFT_Driver_ILI9341::init() {
         delay(150);
     }
 
-    writeCommand(ILI9341_SWRESET);    // Software reset
-    delay(150);                        // Wait for reset to complete
+    writeCommand(ILI9486_SWRESET);    // Software reset
+    delay(150);                       // Wait for reset to complete
 
-    writeCommand(ILI9341_DISPOFF);     // Display off
+    writeCommand(ILI9486_SLPOUT);     // Exit Sleep
+    delay(50);
 
-    writeCommand(ILI9341_PWCTR1);      // Power control
-    writeData(0x23);                   // VRH[5:0]
+    writeCommand(ILI9486_PIXFMT);     // Set pixel format
+    writeData(0x55);                  // 16-bit color
 
-    writeCommand(ILI9341_PWCTR2);      // Power control
-    writeData(0x10);                   // SAP[2:0];BT[3:0]
+    // Power Control 1
+    writeCommand(ILI9486_PWCTR1);
+    writeData(0x0E);
+    writeData(0x0E);
 
-    writeCommand(ILI9341_VMCTR1);      // VCM control
-    writeData(0x3e);
-    writeData(0x28);
-
-    writeCommand(ILI9341_VMCTR2);      // VCM control2
-    writeData(0x86);                   // --
-
-    writeCommand(ILI9341_MADCTL);      // Memory Access Control
-    writeData(0x48);                   // Default rotation (0)
-
-    writeCommand(ILI9341_PIXFMT);
-    writeData(0x55);                   // 16-bit color
-
-    writeCommand(ILI9341_FRMCTR1);
+    // Power Control 2
+    writeCommand(ILI9486_PWCTR2);
+    writeData(0x41);
     writeData(0x00);
-    writeData(0x18);
 
-    writeCommand(ILI9341_DFUNCTR);     // Display Function Control
+    // Power Control 3
+    writeCommand(ILI9486_PWCTR3);
+    writeData(0x00);
+    writeData(0x22);
+    writeData(0x22);
+
+    // VCOM Control
+    writeCommand(ILI9486_VMCTR1);
+    writeData(0x00);
+    writeData(0x35);
+    writeData(0x80);
+
+    writeCommand(ILI9486_MADCTL);    // Memory Access Control
+    writeData(0x48);                 // Default rotation (0)
+
+    // Interface Control
+    writeCommand(0xF6);
+    writeData(0x01);
+    writeData(0x00);
+    writeData(0x06);
+
+    // Positive Gamma Control
+    writeCommand(ILI9486_PGAMMAC);
+    writeData(0x0F);
+    writeData(0x1F);
+    writeData(0x1C);
+    writeData(0x0C);
+    writeData(0x0F);
     writeData(0x08);
-    writeData(0x82);
-    writeData(0x27);
+    writeData(0x48);
+    writeData(0x98);
+    writeData(0x37);
+    writeData(0x0A);
+    writeData(0x13);
+    writeData(0x04);
+    writeData(0x11);
+    writeData(0x0D);
+    writeData(0x00);
 
-    writeCommand(ILI9341_SLPOUT);      // Exit Sleep
-    delay(120);
-    writeCommand(ILI9341_DISPON);      // Display on
+    // Negative Gamma Control
+    writeCommand(ILI9486_NGAMMAC);
+    writeData(0x0F);
+    writeData(0x32);
+    writeData(0x2E);
+    writeData(0x0B);
+    writeData(0x0D);
+    writeData(0x05);
+    writeData(0x47);
+    writeData(0x75);
+    writeData(0x37);
+    writeData(0x06);
+    writeData(0x10);
+    writeData(0x03);
+    writeData(0x24);
+    writeData(0x20);
+    writeData(0x00);
+
+    writeCommand(ILI9486_DISPON);     // Display ON
     delay(120);
 }
 
-void TFT_Driver_ILI9341::writeCommand(uint8_t cmd) {
+void TFT_Driver_ILI9486::writeCommand(uint8_t cmd) {
     if (config.interface == InterfaceMode::SPI) {
         digitalWrite(config.spi.dc_pin, LOW);
         if (config.spi.cs_pin >= 0) digitalWrite(config.spi.cs_pin, LOW);
@@ -74,7 +115,7 @@ void TFT_Driver_ILI9341::writeCommand(uint8_t cmd) {
     }
 }
 
-void TFT_Driver_ILI9341::writeData(uint8_t data) {
+void TFT_Driver_ILI9486::writeData(uint8_t data) {
     if (config.interface == InterfaceMode::SPI) {
         digitalWrite(config.spi.dc_pin, HIGH);
         if (config.spi.cs_pin >= 0) digitalWrite(config.spi.cs_pin, LOW);
@@ -89,7 +130,7 @@ void TFT_Driver_ILI9341::writeData(uint8_t data) {
     }
 }
 
-void TFT_Driver_ILI9341::writeBlock(uint16_t* data, uint32_t len) {
+void TFT_Driver_ILI9486::writeBlock(uint16_t* data, uint32_t len) {
     if (config.interface == InterfaceMode::SPI) {
         digitalWrite(config.spi.dc_pin, HIGH);
         if (config.spi.cs_pin >= 0) digitalWrite(config.spi.cs_pin, LOW);
@@ -115,37 +156,37 @@ void TFT_Driver_ILI9341::writeBlock(uint16_t* data, uint32_t len) {
     }
 }
 
-void TFT_Driver_ILI9341::setRotation(uint8_t rotation) {
+void TFT_Driver_ILI9486::setRotation(uint8_t rotation) {
     _rotation = rotation % 4;
-    writeCommand(ILI9341_MADCTL);
+    writeCommand(ILI9486_MADCTL);
     
     switch (_rotation) {
         case 0:
             writeData(config.color_order == ColorOrder::RGB ? 0x48 : 0x40);
-            _width = ILI9341_TFTWIDTH;
-            _height = ILI9341_TFTHEIGHT;
+            _width = ILI9486_TFTWIDTH;
+            _height = ILI9486_TFTHEIGHT;
             break;
         case 1:
             writeData(config.color_order == ColorOrder::RGB ? 0x28 : 0x20);
-            _width = ILI9341_TFTHEIGHT;
-            _height = ILI9341_TFTWIDTH;
+            _width = ILI9486_TFTHEIGHT;
+            _height = ILI9486_TFTWIDTH;
             break;
         case 2:
             writeData(config.color_order == ColorOrder::RGB ? 0x88 : 0x80);
-            _width = ILI9341_TFTWIDTH;
-            _height = ILI9341_TFTHEIGHT;
+            _width = ILI9486_TFTWIDTH;
+            _height = ILI9486_TFTHEIGHT;
             break;
         case 3:
             writeData(config.color_order == ColorOrder::RGB ? 0xE8 : 0xE0);
-            _width = ILI9341_TFTHEIGHT;
-            _height = ILI9341_TFTWIDTH;
+            _width = ILI9486_TFTHEIGHT;
+            _height = ILI9486_TFTWIDTH;
             break;
     }
 }
 
-void TFT_Driver_ILI9341::invertDisplay(bool invert) {
+void TFT_Driver_ILI9486::invertDisplay(bool invert) {
     _invert = invert;
-    writeCommand(invert ? ILI9341_INVON : ILI9341_INVOFF);
+    writeCommand(invert ? ILI9486_INVON : ILI9486_INVOFF);
 }
 
 } // namespace TFT_Runtime
