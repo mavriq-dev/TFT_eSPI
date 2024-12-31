@@ -1,66 +1,38 @@
-#ifndef _TFT_COMMANDSET_UC8230S_H_
-#define _TFT_COMMANDSET_UC8230S_H_
+#ifndef _TFT_COMMANDSET_ST7781_H_
+#define _TFT_COMMANDSET_ST7781_H_
 
 #include "../../TFT_Command.h"
 
 namespace TFT_Runtime {
 
-class TFT_CommandSet_UC8230S : public CommandSequenceFactory {
+class TFT_CommandSet_ST7781 : public CommandSequenceFactory {
 public:
     CommandSequence createInitSequence() override {
-        CommandSequence seq("UC8230S Init");
+        CommandSequence seq("ST7781 Init");
         
         // Software Reset
         seq.addCommand(0x01, "Software Reset");
         seq.addDelay(120);
         
-        // Power Control A
-        seq.addCommand(0xCB, "Power Control A");
-        seq.addDataList({0x39, 0x2C, 0x00, 0x34, 0x02});
-        
-        // Power Control B
-        seq.addCommand(0xCF, "Power Control B");
-        seq.addDataList({0x00, 0xC1, 0x30});
-        
-        // Driver Timing Control A
-        seq.addCommand(0xE8, "Driver Timing Control A");
-        seq.addDataList({0x85, 0x00, 0x78});
-        
-        // Driver Timing Control B
-        seq.addCommand(0xEA, "Driver Timing Control B");
-        seq.addDataList({0x00, 0x00});
-        
-        // Power On Sequence Control
-        seq.addCommand(0xED, "Power On Sequence Control");
-        seq.addDataList({0x64, 0x03, 0x12, 0x81});
-        
-        // Pump Ratio Control
-        seq.addCommand(0xF7, "Pump Ratio Control");
-        seq.addData(0x20);
-        
         // Power Control 1
         seq.addCommand(0xC0, "Power Control 1");
-        seq.addData(0x23);
+        seq.addDataList({0x23});
         
         // Power Control 2
         seq.addCommand(0xC1, "Power Control 2");
-        seq.addData(0x10);
+        seq.addDataList({0x10});
         
         // VCOM Control 1
         seq.addCommand(0xC5, "VCOM Control 1");
         seq.addDataList({0x3E, 0x28});
         
-        // VCOM Control 2
-        seq.addCommand(0xC7, "VCOM Control 2");
-        seq.addData(0x86);
-        
         // Memory Access Control
         seq.addCommand(0x36, "Memory Access Control");
-        seq.addData(0x48);
+        seq.addDataList({0x48});
         
-        // Pixel Format Set
-        seq.addCommand(0x3A, "Pixel Format Set");
-        seq.addData(0x55);  // 16-bit color
+        // Interface Pixel Format
+        seq.addCommand(0x3A, "Interface Pixel Format");
+        seq.addDataList({0x55});  // 16-bit color
         
         // Frame Rate Control
         seq.addCommand(0xB1, "Frame Rate Control");
@@ -70,13 +42,13 @@ public:
         seq.addCommand(0xB6, "Display Function Control");
         seq.addDataList({0x08, 0x82, 0x27});
         
-        // Enable 3G
-        seq.addCommand(0xF2, "Enable 3G");
-        seq.addData(0x00);
+        // Entry Mode Set
+        seq.addCommand(0xB7, "Entry Mode Set");
+        seq.addDataList({0x07});
         
         // Gamma Set
         seq.addCommand(0x26, "Gamma Set");
-        seq.addData(0x01);
+        seq.addDataList({0x01});
         
         // Positive Gamma Correction
         seq.addCommand(0xE0, "Positive Gamma Correction");
@@ -101,7 +73,7 @@ public:
     }
 
     CommandSequence createSleepSequence() override {
-        CommandSequence seq("UC8230S Sleep");
+        CommandSequence seq("ST7781 Sleep");
         seq.addCommand(0x28, "Display Off");
         seq.addDelay(20);
         seq.addCommand(0x10, "Enter Sleep");
@@ -111,7 +83,7 @@ public:
     }
 
     CommandSequence createWakeSequence() override {
-        CommandSequence seq("UC8230S Wake");
+        CommandSequence seq("ST7781 Wake");
         seq.addCommand(0x11, "Sleep Out");
         seq.addDelay(120);
         seq.addCommand(0x29, "Display On");
@@ -121,7 +93,7 @@ public:
     }
 
     CommandSequence createDisplayOnSequence() override {
-        CommandSequence seq("UC8230S Display On");
+        CommandSequence seq("ST7781 Display On");
         seq.addCommand(0x29, "Display On");
         seq.addDelay(20);
         seq.addEnd();
@@ -129,7 +101,7 @@ public:
     }
 
     CommandSequence createDisplayOffSequence() override {
-        CommandSequence seq("UC8230S Display Off");
+        CommandSequence seq("ST7781 Display Off");
         seq.addCommand(0x28, "Display Off");
         seq.addDelay(20);
         seq.addEnd();
@@ -137,21 +109,21 @@ public:
     }
 
     CommandSequence createInvertOnSequence() override {
-        CommandSequence seq("UC8230S Invert On");
+        CommandSequence seq("ST7781 Invert On");
         seq.addCommand(0x21, "Display Inversion ON");
         seq.addEnd();
         return seq;
     }
 
     CommandSequence createInvertOffSequence() override {
-        CommandSequence seq("UC8230S Invert Off");
+        CommandSequence seq("ST7781 Invert Off");
         seq.addCommand(0x20, "Display Inversion OFF");
         seq.addEnd();
         return seq;
     }
 
     CommandSequence createSetRotationSequence(uint8_t rotation) {
-        CommandSequence seq("UC8230S Set Rotation");
+        CommandSequence seq("ST7781 Set Rotation");
         uint8_t madctl = 0;
         
         switch (rotation) {
@@ -176,7 +148,7 @@ public:
     }
 
     CommandSequence createSetWindowSequence(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
-        CommandSequence seq("UC8230S Set Window");
+        CommandSequence seq("ST7781 Set Window");
         
         seq.addCommand(0x2A, "Column Address Set");
         seq.addDataList({
@@ -200,7 +172,7 @@ public:
     }
 
     CommandSequence createSetGammaSequence(bool positive, const std::vector<uint8_t>& gammaValues) {
-        CommandSequence seq("UC8230S Set Gamma");
+        CommandSequence seq("ST7781 Set Gamma");
         if (gammaValues.size() == 15) {
             seq.addCommand(positive ? 0xE0 : 0xE1, 
                          positive ? "Positive Gamma" : "Negative Gamma");
@@ -211,7 +183,7 @@ public:
     }
 
     CommandSequence createSetVCOMSequence(uint8_t vcom1, uint8_t vcom2) {
-        CommandSequence seq("UC8230S Set VCOM");
+        CommandSequence seq("ST7781 Set VCOM");
         seq.addCommand(0xC5, "VCOM Control 1");
         seq.addDataList({vcom1, vcom2});
         seq.addEnd();
@@ -219,10 +191,10 @@ public:
     }
 
     CommandSequence createSetPowerControlSequence(const std::vector<uint8_t>& powerParams) {
-        CommandSequence seq("UC8230S Set Power Control");
-        if (powerParams.size() >= 5) {
-            seq.addCommand(0xCB, "Power Control A");
-            seq.addDataList(std::vector<uint8_t>(powerParams.begin(), powerParams.begin() + 5));
+        CommandSequence seq("ST7781 Set Power Control");
+        if (powerParams.size() >= 1) {
+            seq.addCommand(0xC0, "Power Control 1");
+            seq.addDataList({powerParams[0]});
         }
         seq.addEnd();
         return seq;
@@ -231,4 +203,4 @@ public:
 
 } // namespace TFT_Runtime
 
-#endif // _TFT_COMMANDSET_UC8230S_H_
+#endif // _TFT_COMMANDSET_ST7781_H_
