@@ -477,16 +477,32 @@ bool TFT_Interface_Parallel::supportsDMA() {
 }
 
 bool TFT_Interface_Parallel::startDMAWrite(const uint8_t* data, size_t len) {
-    // Platform-specific DMA implementation
+    #if defined(__IMXRT1062__)
+    if (_is16Bit && _dmaChannel && len >= 32) {  // Only use DMA for larger transfers
+        _dmaChannel->sourceBuffer((volatile uint16_t*)data, len/2);
+        _dmaChannel->enable();
+        return true;
+    }
+    #endif
     return false;
 }
 
 void TFT_Interface_Parallel::cleanupDMA() {
-    // Platform-specific DMA cleanup
+    #if defined(__IMXRT1062__)
+    if (_dmaChannel) {
+        _dmaChannel->disable();
+    }
+    #endif
 }
 
 void TFT_Interface_Parallel::waitDMAComplete() {
-    // Platform-specific DMA wait
+    #if defined(__IMXRT1062__)
+    if (_dmaChannel) {
+        while (!_dmaChannel->complete()) {
+            yield();
+        }
+    }
+    #endif
 }
 
 void TFT_Interface_Parallel::setDataPinsOutput() {
@@ -657,34 +673,6 @@ void TFT_Interface_Parallel::writeTeensy_16(uint16_t data) {
     #endif
 }
 
-bool TFT_Interface_Parallel::startDMAWrite(const uint8_t* data, size_t len) {
-    #if defined(__IMXRT1062__)
-    if (_is16Bit && _dmaChannel && len >= 32) {  // Only use DMA for larger transfers
-        _dmaChannel->sourceBuffer((volatile uint16_t*)data, len/2);
-        _dmaChannel->enable();
-        return true;
-    }
-    #endif
-    return false;
-}
-
-void TFT_Interface_Parallel::cleanupDMA() {
-    #if defined(__IMXRT1062__)
-    if (_dmaChannel) {
-        _dmaChannel->disable();
-    }
-    #endif
-}
-
-void TFT_Interface_Parallel::waitDMAComplete() {
-    #if defined(__IMXRT1062__)
-    if (_dmaChannel) {
-        while (!_dmaChannel->complete()) {
-            yield();
-        }
-    }
-    #endif
-}
 #endif
 
 } // namespace TFT_Runtime

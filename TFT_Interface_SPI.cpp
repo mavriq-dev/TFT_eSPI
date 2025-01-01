@@ -278,7 +278,13 @@ void TFT_Interface_SPI::cleanupDMA() {
 }
 
 void TFT_Interface_SPI::waitDMAComplete() {
-    #if defined(__IMXRT1062__)
+    #if defined(ESP32)
+    if (_dmaInitialized) {
+        while (!_spi->DMAbsy()) {
+            yield();
+        }
+    }
+    #elif defined(CORE_TEENSY) && defined(__IMXRT1062__)
     if (_dmaChannel) {
         while (!_dmaChannel->complete()) {
             yield();

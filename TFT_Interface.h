@@ -8,12 +8,7 @@ namespace TFT_Runtime {
 
 // Forward declarations
 class TFT_Interface;
-
-// Interface factory class
-class TFT_Interface_Factory {
-public:
-    static TFT_Interface* createInterface(const Config& config);
-};
+class TFT_Interface_Factory;
 
 // Base interface class
 class TFT_Interface {
