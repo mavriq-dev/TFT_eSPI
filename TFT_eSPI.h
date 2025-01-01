@@ -33,6 +33,7 @@
 #if !defined (TFT_PARALLEL_8_BIT) && !defined (RP2040_PIO_INTERFACE)
   #include <SPI.h>
 #endif
+#include "TFT_Interface.h"
 
 /***************************************************************************************
 **                         Section 2: Load library and processor specific header files
@@ -801,6 +802,10 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
   bool     DMA_Enabled = false;   // Flag for DMA enabled state
   uint8_t  spiBusyCheck = 0;      // Number of ESP32 transfer buffers to check
 
+  // Runtime configuration methods
+  bool switchInterface(const TFT_Runtime::Config& config);
+  const TFT_Runtime::Config& getConfig() const { return _runtime_config; }
+
   // Bare metal functions
   void     startWrite(void);                         // Begin SPI transaction
   void     writeColor(uint16_t color, uint32_t len); // Deprecated, use pushBlock()
@@ -839,6 +844,7 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
   uint16_t decoderBuffer;      // Unicode code-point buffer - not for user access
 
   TFT_Runtime::Config _runtime_config; // Runtime configuration
+  TFT_Runtime::TFT_Interface* _tft_interface = nullptr;  // Current interface instance
 
  //-------------------------------------- protected ----------------------------------//
  protected:

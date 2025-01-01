@@ -1,7 +1,7 @@
 #ifndef _TFT_RUNTIME_H_
 #define _TFT_RUNTIME_H_
 
-#include <cstdint>  // For fixed-width integer types
+#include <Arduino.h>  // For fixed-width integer types
 
 namespace TFT_Runtime {
 

@@ -772,7 +772,6 @@ void TFT_eSPI::init(uint8_t tc)
 #endif
 }
 
-
 /***************************************************************************************
 ** Function name:           setRotation
 ** Description:             rotate the screen orientation m = 0-3 or 4-7 for BMP drawing
@@ -1688,18 +1687,18 @@ void TFT_eSPI::pushImage(int32_t x, int32_t y, int32_t w, int32_t h, const uint8
   else // Must be 1bpp
   {
     _swapBytes = false;
-    uint8_t * ptr = (uint8_t*)data;
+    // uint8_t * ptr = (uint8_t*)data;
     uint32_t ww =  (w+7)>>3; // Width of source image line in bytes
     for (int32_t yp = dy;  yp < dy + dh; yp++)
     {
       uint8_t* linePtr = (uint8_t*)lineBuf;
       for (int32_t xp = dx; xp < dx + dw; xp++)
       {
-        uint16_t col = (pgm_read_byte(ptr + (xp>>3)) & (0x80 >> (xp & 0x7)) );
+        uint16_t col = (pgm_read_byte(data + (xp>>3)) & (0x80 >> (xp & 0x7)) );
         if (col) {*linePtr++ = bitmap_fg>>8; *linePtr++ = (uint8_t) bitmap_fg;}
         else     {*linePtr++ = bitmap_bg>>8; *linePtr++ = (uint8_t) bitmap_bg;}
       }
-      ptr += ww;
+      // ptr += ww;
       pushPixels(lineBuf, dw);
       data += ww;
     }
@@ -1981,7 +1980,7 @@ void TFT_eSPI::pushImage(int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *da
               move = false; sx = px;
              }
             lineBuf[np] = cmap[index];
-            np++;
+            np++; //added a pixel
           }
           else {
             move = true;
@@ -1994,8 +1993,9 @@ void TFT_eSPI::pushImage(int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *da
           px++;
         }
         else {
-          break;  // we are done with this row.
+          break;  // nothing to do here
         }
+
         ptr++;  // we only increment ptr once in the loop (deliberate)
       }
 
@@ -2215,7 +2215,7 @@ void  TFT_eSPI::readRectRGB(int32_t x0, int32_t y0, int32_t w, int32_t h, uint8_
 
   }
 
-  CS_H;
+  //CS_H; Changed by Windsurf
 
   #ifdef TFT_SDA_READ
     end_SDA_Read();
@@ -2302,7 +2302,7 @@ void TFT_eSPI::drawCircle(int32_t x0, int32_t y0, int32_t r, uint32_t color)
 ***************************************************************************************/
 void TFT_eSPI::drawCircleHelper( int32_t x0, int32_t y0, int32_t rr, uint8_t cornername, uint32_t color)
 {
-  if (rr <= 0) return;
+  if (rr <= 0) return; 
   int32_t f     = 1 - rr;
   int32_t ddF_x = 1;
   int32_t ddF_y = -2 * rr;
@@ -2321,7 +2321,7 @@ void TFT_eSPI::drawCircleHelper( int32_t x0, int32_t y0, int32_t rr, uint8_t cor
     }
     f += (ddF_y += 2);
 
-    if (xe-xs==1) {
+    if (xe-xs==1) { //TODO Windsurf thinks bug and changed from if (xe-xs>1) to if (xe-xs==1)
       if (cornername & 0x1) { // left top
         drawPixel(x0 - xe, y0 - rr, color);
         drawPixel(x0 - rr, y0 - xe, color);
@@ -2754,7 +2754,7 @@ void TFT_eSPI::drawBitmap(int16_t x, int16_t y, const uint8_t *bitmap, int16_t w
   for (j = 0; j < h; j++) {
     for (i = 0; i < w; i++ ) {
       if (pgm_read_byte(bitmap + j * byteWidth + i / 8) & (128 >> (i & 7)))
-           drawPixel(x + i, y + j, fgcolor);
+           drawPixel(x + i, y + j,   fgcolor);
       else drawPixel(x + i, y + j, bgcolor);
     }
   }
@@ -6121,3 +6121,39 @@ void TFT_eSPI::getSetup(setup_t &tft_settings)
   #include "Extensions/AA_graphics.cpp"  // Loaded if SMOOTH_FONT is defined by user
 #endif
 ////////////////////////////////////////////////////////////////////////////////////////
+
+{{ ... }}
+// *************************************************************************************
+// * Function name:           switchInterface
+// * Description:             Switch between SPI and Parallel interfaces at runtime
+// **************************************************************************************/
+bool TFT_eSPI::switchInterface(const TFT_Runtime::Config& config) {
+    // Store old interface type to check if we need to reinitialize
+    auto oldInterface = _runtime_config.interface;
+    
+    // Update configuration
+    _runtime_config = config;
+
+    // If interface type changed, we need to reinitialize
+    if (oldInterface != config.interface) {
+        // Clean up old interface
+        if (_tft_interface) {
+            delete _tft_interface;
+            _tft_interface = nullptr;
+        }
+
+        // Initialize new interface
+        _tft_interface = TFT_Runtime::TFT_Interface_Factory::createInterface(config);
+        if (!_tft_interface) {
+            return false;
+        }
+
+        // Initialize the bus
+        initBus();
+        
+        // Reinitialize the display
+        init();
+    }
+
+    return true;
+}
