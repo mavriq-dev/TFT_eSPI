@@ -27,7 +27,6 @@ enum class DisplayDriver {
     ILI9225,
     ILI9327,
     ILI9342,
-    ILI9481,
     ILI9806,
     ILI9881C,
     NT35310,
@@ -51,7 +50,8 @@ enum class DisplayDriver {
 // Interface modes
 enum class InterfaceMode {
     SPI,
-    PARALLEL_8BIT
+    PARALLEL_8BIT,
+    PARALLEL_16BIT
 };
 
 // Color order options
@@ -78,14 +78,11 @@ struct ParallelConfig {
     int8_t rd_pin = -1;
     int8_t cs_pin = -1;
     int8_t dc_pin = -1;
-    int8_t d0_pin = -1;
-    int8_t d1_pin = -1;
-    int8_t d2_pin = -1;
-    int8_t d3_pin = -1;
-    int8_t d4_pin = -1;
-    int8_t d5_pin = -1;
-    int8_t d6_pin = -1;
-    int8_t d7_pin = -1;
+    int8_t data_pins[16] = {-1};  // Support for up to 16 data pins
+    bool is_16bit = false;        // Flag for 16-bit mode
+    uint32_t write_delay = 0;     // Optional delay between writes (in nanoseconds)
+    bool use_latch = false;       // Use latch for 16-bit mode
+    int8_t latch_pin = -1;        // Latch pin for 16-bit mode
 };
 
 // Main runtime configuration structure
