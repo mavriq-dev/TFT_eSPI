@@ -27,7 +27,6 @@ enum class DisplayDriver {
     ILI9225,
     ILI9327,
     ILI9342,
-    ILI9481,
     ILI9806,
     ILI9881C,
     NT35310,
