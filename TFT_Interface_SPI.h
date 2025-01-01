@@ -1,30 +1,32 @@
-#ifndef _TFT_INTERFACE_PARALLEL_H_
-#define _TFT_INTERFACE_PARALLEL_H_
+#ifndef _TFT_INTERFACE_SPI_H_
+#define _TFT_INTERFACE_SPI_H_
 
 #include "TFT_Interface.h"
+#include <SPI.h>
 
 // Platform-specific includes
 #if defined(ESP32)
     #include "soc/spi_struct.h"
     #include "esp32/rom/lldesc.h"
+    #include "soc/spi_reg.h"
+    #include "driver/spi_master.h"
 #elif defined(ARDUINO_ARCH_RP2040)
-    #include "hardware/pio.h"
+    #include "hardware/spi.h"
     #include "hardware/dma.h"
     #include "hardware/clocks.h"
 #endif
 
 #if defined(CORE_TEENSY) && defined(__IMXRT1062__)
     #include <imxrt.h>
-    #include <FlexIO_t4.h>
     #include <DMAChannel.h>
 #endif
 
 namespace TFT_Runtime {
 
-class TFT_Interface_Parallel : public TFT_Interface {
+class TFT_Interface_SPI : public TFT_Interface {
 public:
-    explicit TFT_Interface_Parallel(const Config& config);
-    ~TFT_Interface_Parallel() override;
+    explicit TFT_Interface_SPI(const Config& config);
+    ~TFT_Interface_SPI() override;
 
     bool begin() override;
     void writeCommand(uint8_t cmd) override;
@@ -36,17 +38,14 @@ public:
     void writeDataBlock16(const uint16_t* data, size_t len) override;
     void readDataBlock(uint8_t* data, size_t len) override;
     void readDataBlock16(uint16_t* data, size_t len) override;
-
     void beginTransaction() override;
     void endTransaction() override;
     void beginRead() override;
     void endRead() override;
     void begin_nin_write() override;
     void end_nin_write() override;
-
     bool supportsDMA() override;
     bool startDMAWrite(const uint8_t* data, size_t len) override;
-
     void setViewport(int32_t x, int32_t y, int32_t w, int32_t h, bool vpDatum = false) override;
     void resetViewport() override;
     bool checkViewport(int32_t x, int32_t y, int32_t w, int32_t h) override;
@@ -97,47 +96,41 @@ protected:
 
     // Helper methods
     void setupPins();
-    void setDataPinsOutput();
-    void setDataPinsInput();
-    void pulseWR();
-    void pulseRD();
-    void pulseLatch();
-    void delayWrite();
+    void setSPISettings();
+    void beginSPITransaction();
+    void endSPITransaction();
 
 private:
     // Pin configuration
     const int8_t _csPin;
-    const int8_t _dcPin;    // Data/Command pin
-    const int8_t _wrPin;
-    const int8_t _rdPin;
+    const int8_t _dcPin;
+    const int8_t _mosiPin;
+    const int8_t _misoPin;
+    const int8_t _sckPin;
     const int8_t _rstPin;
-    const int8_t _latchPin;
-    const bool _is16Bit;
-    const bool _useLatch;
-    const uint8_t _writeDelay;
-
-    // Data pins array
-    int8_t _dataPins[16];  // Support up to 16-bit parallel
+    const uint32_t _spiFreq;
+    const uint8_t _spiMode;
+    
+    // SPI settings
+    SPISettings _spiSettings;
+    SPIClass* _spi;
+    bool _hwSPI;
 
     // Platform-specific members
-#if defined(ESP32)
-    int8_t _dmaChannel;
-    uint8_t* _dmaBuf;
-    lldesc_t* _dmadesc;
-    bool _dmaInitialized;
-#elif defined(ARDUINO_ARCH_RP2040)
-    PIO _pio;
-    uint _sm;
-    uint _dma_chan;
-    bool _pioInitialized;
-#elif defined(CORE_TEENSY)
-    #if defined(__IMXRT1062__)
-        IMXRT_FLEXIO_t* _flexIO;
-        uint8_t _flexIOShifter;
-        uint8_t _flexIOTimer;
+    #if defined(ESP32)
+        spi_device_handle_t _spi_handle;
+        lldesc_t* _dmadesc;
+        uint8_t* _dmaBuf;
+        bool _dmaInitialized;
+    #elif defined(ARDUINO_ARCH_RP2040)
+        spi_inst_t* _spi_inst;
+        uint _dma_tx;
+        uint _dma_rx;
+        bool _dmaInitialized;
+    #elif defined(CORE_TEENSY) && defined(__IMXRT1062__)
         DMAChannel* _dmaChannel;
+        bool _dmaInitialized;
     #endif
-#endif
 
     // Viewport management
     int32_t _vpX, _vpY, _vpW, _vpH;
@@ -147,4 +140,4 @@ private:
 
 } // namespace TFT_Runtime
 
-#endif // _TFT_INTERFACE_PARALLEL_H_
+#endif // _TFT_INTERFACE_SPI_H_

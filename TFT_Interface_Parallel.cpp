@@ -1,5 +1,9 @@
 #include "TFT_Interface_Parallel.h"
 #include <Arduino.h>
+#if defined(__IMXRT1062__)
+#include "core_pins.h"
+#include "imxrt.h"
+#endif
 
 namespace TFT_Runtime {
 
@@ -86,7 +90,7 @@ void TFT_Interface_Parallel::writeCommand(uint8_t cmd) {
     #elif defined(__AVR__)
         writeData(cmd);  // AVR specific implementation
     #elif defined(CORE_TEENSY)
-        writeData(cmd);  // Teensy specific implementation
+        writeTeensy_8(cmd);  // Teensy specific implementation
     #else
         writeData(cmd);  // Default implementation
     #endif
@@ -112,8 +116,7 @@ void TFT_Interface_Parallel::writeData(uint8_t data) {
         // AVR specific implementation
         // TODO: Implement platform-specific data write
     #elif defined(CORE_TEENSY)
-        // Teensy specific implementation
-        // TODO: Implement platform-specific data write
+        writeTeensy_8(data);  // Teensy specific implementation
     #else
         // Default implementation
         // TODO: Implement generic data write
@@ -145,9 +148,7 @@ void TFT_Interface_Parallel::writeData16(uint16_t data) {
         writeData(data >> 8);
         writeData(data & 0xFF);
     #elif defined(CORE_TEENSY)
-        // Teensy specific 16-bit implementation
-        writeData(data >> 8);
-        writeData(data & 0xFF);
+        writeTeensy_16(data);  // Teensy specific 16-bit implementation
     #else
         // Default 16-bit implementation
         writeData(data >> 8);
@@ -371,6 +372,69 @@ bool TFT_Interface_Parallel::initAVR() {
 #if defined(CORE_TEENSY)
 bool TFT_Interface_Parallel::initTeensy() {
     setupPins();
+    
+    #if defined(__IMXRT1062__)  // Teensy 4.0/4.1
+    // Configure FlexIO for parallel interface
+    if (_is16Bit) {
+        // 16-bit mode setup
+        _flexIO = &IMXRT_FLEXIO1_S;  // Use the correct peripheral naming for Teensy 4.1
+        _flexIOShifter = 0;
+        _flexIOTimer = 0;
+        
+        // Configure FlexIO pins
+        for (int i = 0; i < 16; i++) {
+            pinMode(_dataPins[i], OUTPUT);
+            *(portConfigRegister(_dataPins[i])) = 6; // FlexIO function
+        }
+        
+        // Configure FlexIO shifter for 16-bit parallel output
+        _flexIO->SHIFTCTL[_flexIOShifter] = 
+            FLEXIO_SHIFTCTL_TIMSEL(_flexIOTimer) |
+            FLEXIO_SHIFTCTL_PINCFG(3) |         // Output on rising edge
+            FLEXIO_SHIFTCTL_PINSEL(0) |         // Start from pin 0
+            FLEXIO_SHIFTCTL_SMOD(2);            // 16-bit parallel output
+            
+        // Configure FlexIO timer
+        _flexIO->TIMCTL[_flexIOTimer] = 
+            FLEXIO_TIMCTL_TRGSEL(1) |           // Trigger on shifter status flag
+            FLEXIO_TIMCTL_TIMOD(1);             // Dual 8-bit counters
+            
+        // Enable FlexIO
+        _flexIO->CTRL = FLEXIO_CTRL_FLEXEN;
+        
+        // Setup DMA if supported
+        if (supportsDMA()) {
+            _dmaChannel = new DMAChannel();
+            if (_dmaChannel) {
+                _dmaChannel->begin();
+                _dmaChannel->destination(_flexIO->SHIFTBUF[_flexIOShifter]);
+            }
+        }
+    } else {
+        // 8-bit mode setup (simpler GPIO)
+        for (int i = 0; i < 8; i++) {
+            pinMode(_dataPins[i], OUTPUT);
+        }
+    }
+    #else
+    // Other Teensy boards - basic GPIO setup
+    for (int i = 0; i < (_is16Bit ? 16 : 8); i++) {
+        pinMode(_dataPins[i], OUTPUT);
+    }
+    #endif
+    
+    pinMode(_csPin, OUTPUT);
+    pinMode(_dcPin, OUTPUT);
+    pinMode(_wrPin, OUTPUT);
+    if (_rdPin >= 0) pinMode(_rdPin, OUTPUT);
+    if (_rstPin >= 0) pinMode(_rstPin, OUTPUT);
+    
+    // Initial states
+    digitalWrite(_csPin, HIGH);
+    digitalWrite(_dcPin, HIGH);
+    digitalWrite(_wrPin, HIGH);
+    if (_rdPin >= 0) digitalWrite(_rdPin, HIGH);
+    
     return true;
 }
 #endif
@@ -547,5 +611,80 @@ bool TFT_Interface_Parallel::clipWindow(int32_t* xs, int32_t* ys, int32_t* xe, i
 
     return (*xs <= *xe && *ys <= *ye);
 }
+
+#if defined(CORE_TEENSY)
+void TFT_Interface_Parallel::writeTeensy_8(uint8_t data) {
+    #if defined(__IMXRT1062__)
+    if (_is16Bit) {
+        _flexIO->SHIFTBUF[_flexIOShifter] = data;
+        while (!(_flexIO->SHIFTSTAT & (1 << _flexIOShifter))) ; // Wait for completion
+    } else {
+        for (int i = 0; i < 8; i++) {
+            digitalWrite(_dataPins[i], (data >> i) & 0x01);
+        }
+    }
+    #else
+    // Direct GPIO for other Teensy boards
+    for (int i = 0; i < 8; i++) {
+        digitalWrite(_dataPins[i], (data >> i) & 0x01);
+    }
+    #endif
+    pulseWR();
+}
+
+void TFT_Interface_Parallel::writeTeensy_16(uint16_t data) {
+    #if defined(__IMXRT1062__)
+    if (_is16Bit) {
+        _flexIO->SHIFTBUF[_flexIOShifter] = data;
+        while (!(_flexIO->SHIFTSTAT & (1 << _flexIOShifter))) ; // Wait for completion
+    } else {
+        // Split into two 8-bit writes
+        writeTeensy_8(data >> 8);
+        writeTeensy_8(data & 0xFF);
+    }
+    #else
+    // Direct GPIO for other Teensy boards
+    if (_is16Bit) {
+        for (int i = 0; i < 16; i++) {
+            digitalWrite(_dataPins[i], (data >> i) & 0x01);
+        }
+        pulseWR();
+    } else {
+        // Split into two 8-bit writes
+        writeTeensy_8(data >> 8);
+        writeTeensy_8(data & 0xFF);
+    }
+    #endif
+}
+
+bool TFT_Interface_Parallel::startDMAWrite(const uint8_t* data, size_t len) {
+    #if defined(__IMXRT1062__)
+    if (_is16Bit && _dmaChannel && len >= 32) {  // Only use DMA for larger transfers
+        _dmaChannel->sourceBuffer((volatile uint16_t*)data, len/2);
+        _dmaChannel->enable();
+        return true;
+    }
+    #endif
+    return false;
+}
+
+void TFT_Interface_Parallel::cleanupDMA() {
+    #if defined(__IMXRT1062__)
+    if (_dmaChannel) {
+        _dmaChannel->disable();
+    }
+    #endif
+}
+
+void TFT_Interface_Parallel::waitDMAComplete() {
+    #if defined(__IMXRT1062__)
+    if (_dmaChannel) {
+        while (!_dmaChannel->complete()) {
+            yield();
+        }
+    }
+    #endif
+}
+#endif
 
 } // namespace TFT_Runtime
