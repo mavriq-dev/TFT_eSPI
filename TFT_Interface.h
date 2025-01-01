@@ -10,6 +10,14 @@ namespace TFT_Runtime {
 class TFT_Interface;
 class TFT_Interface_Factory;
 
+// DMA status tracking
+enum DMAStatus {
+    DMA_INACTIVE = 0,
+    DMA_ACTIVE = 1,
+    DMA_COMPLETE = 2,
+    DMA_ERROR = 3
+};
+
 // Base interface class
 class TFT_Interface {
 public:

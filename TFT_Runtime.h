@@ -77,14 +77,20 @@ struct ParallelConfig {
     int8_t rd_pin = -1;
     int8_t cs_pin = -1;
     int8_t dc_pin = -1;
-    int8_t d0_pin = -1;
-    int8_t d1_pin = -1;
-    int8_t d2_pin = -1;
-    int8_t d3_pin = -1;
-    int8_t d4_pin = -1;
-    int8_t d5_pin = -1;
-    int8_t d6_pin = -1;
-    int8_t d7_pin = -1;
+    
+    // Data bus configuration
+    uint8_t bus_width = 8;  // 8, 16, etc.
+    int8_t data_pins[16] = {-1};  // Support up to 16-bit bus
+    
+    // Optional control signals for some displays
+    int8_t ale_pin = -1;    // Address Latch Enable
+    int8_t te_pin = -1;     // Tearing Effect
+    
+    // Bus timing configuration (in nanoseconds)
+    uint16_t write_setup_time = 0;
+    uint16_t write_pulse_width = 0;
+    uint16_t read_setup_time = 0;
+    uint16_t read_pulse_width = 0;
 };
 
 // Main runtime configuration structure

@@ -19,6 +19,18 @@
 #if defined(CORE_TEENSY) && defined(__IMXRT1062__)
     #include <imxrt.h>
     #include <DMAChannel.h>
+#elif defined(CORE_TEENSY) && defined(__MK66FX1M0__)  // Teensy 3.6
+    // #include <imxrt.h>
+    #include <DMAChannel.h>
+    #include <core_pins.h>
+    #include <kinetis.h>
+#elif defined(CORE_TEENSY)
+    #include <imxrt.h>
+    #include <DMAChannel.h>
+    #if defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)
+        #include <core_pins.h>
+        #include <kinetis.h>
+    #endif
 #endif
 
 namespace TFT_Runtime {
@@ -61,19 +73,43 @@ protected:
     bool initAVR();
     bool initTeensy();
 
-    // Platform-specific write methods
+    // Platform-specific write functions
+    #if defined(ESP32)
     void writeESP32_8(uint8_t data);
     void writeESP32_16(uint16_t data);
+    #elif defined(ESP8266)
     void writeESP8266_8(uint8_t data);
     void writeESP8266_16(uint16_t data);
+    #elif defined(ARDUINO_ARCH_RP2040)
     void writeRP2040_8(uint8_t data);
     void writeRP2040_16(uint16_t data);
+    #elif defined(STM32)
+    void writeSTM32_8(uint8_t data);
+    void writeSTM32_16(uint16_t data);
+    #elif defined(ARDUINO_SAM_DUE)
     void writeSAMDUE_8(uint8_t data);
     void writeSAMDUE_16(uint16_t data);
+    #elif defined(__AVR__)
     void writeAVR_8(uint8_t data);
     void writeAVR_16(uint16_t data);
-    void writeTeensy_8(uint8_t data);
-    void writeTeensy_16(uint16_t data);
+    #elif defined(CORE_TEENSY)
+    #if defined(__IMXRT1062__)
+    void writeTeensy40_8(uint8_t data);
+    void writeTeensy40_16(uint16_t data);
+    #elif defined(__MK66FX1M0__)
+    void writeTeensy36_8(uint8_t data);
+    void writeTeensy36_16(uint16_t data);
+    #elif defined(__MK64FX512__)
+    void writeTeensy35_8(uint8_t data);
+    void writeTeensy35_16(uint16_t data);
+    #elif defined(__MK20DX256__)
+    void writeTeensy32_8(uint8_t data);
+    void writeTeensy32_16(uint16_t data);
+    #elif defined(__MK20DX128__)
+    void writeTeensy30_8(uint8_t data);
+    void writeTeensy30_16(uint16_t data);
+    #endif
+    #endif
 
     // Platform-specific read methods
     uint8_t readESP32_8();
@@ -99,6 +135,9 @@ protected:
     void setSPISettings();
     void beginSPITransaction();
     void endSPITransaction();
+
+    // DMA related members
+    bool _dmaInitialized;  // Tracks DMA initialization state across platforms
 
 private:
     // Pin configuration
@@ -130,12 +169,46 @@ private:
     #elif defined(CORE_TEENSY) && defined(__IMXRT1062__)
         DMAChannel* _dmaChannel;
         bool _dmaInitialized;
+    #elif defined(CORE_TEENSY) && defined(__MK66FX1M0__)  // Teensy 3.6
+        DMAChannel* _dmaChannel;
+        uint32_t _dmaBufSize;
+        uint8_t* _dmaBuf;
+        size_t _dmaRemaining;  // Track remaining bytes to transfer
+        size_t _dmaSent;      // Track bytes already sent
+        volatile uint32_t* _spiBaseReg;  // Base register for SPI
+        volatile uint32_t* _spiSR;       // Status register
+        volatile uint32_t* _spiDR;       // Data register
+        volatile uint32_t* _spiMCR;      // Module configuration register
+        enum DMAStatus {
+            DMA_INACTIVE = 0,
+            DMA_ACTIVE = 1,
+            DMA_COMPLETE = 2
+        };
+        volatile DMAStatus _dmaStatus;  // Track DMA transfer status
+        
+        // Optimized SPI write functions
+        inline void fastSPIwrite(uint8_t data) {
+            while (!(*_spiSR & SPI_SR_TFFF)) ; // Wait for transmit FIFO not full
+            *_spiDR = data;
+        }
+        
+        inline void fastSPIwrite16(uint16_t data) {
+            while (!(*_spiSR & SPI_SR_TFFF)) ; // Wait for transmit FIFO not full
+            *_spiDR = data;
+        }
+        
+        // DMA optimization functions
+        void initTeensyDMA();
+        void setupTeensyFIFO();
+        static void _dmaInterruptHandlerTeensy36();
     #endif
 
     // Viewport management
     int32_t _vpX, _vpY, _vpW, _vpH;
     bool _vpDatum;
     bool _vpActive;
+
+    static TFT_Interface_SPI* _instance;
 };
 
 } // namespace TFT_Runtime
