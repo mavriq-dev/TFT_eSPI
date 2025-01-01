@@ -239,8 +239,23 @@ bool TFT_Interface_SPI::initTeensy() {
         _dmaChannel = new DMAChannel();
         if (_dmaChannel) {
             _dmaChannel->begin();
-            // Instead of directly accessing hardware, we'll use the transfer method
-            // The SPI class will handle the DMA setup internally
+            // Configure DMA for optimal performance on Teensy 4/4.1
+            _dmaChannel->triggerAtHardwareEvent(DMAMUX_SOURCE_LPSPI4_TX);
+            _dmaChannel->transferSize(4); // 32-bit transfers for better throughput
+            _dmaChannel->transferCount(1);
+            _dmaChannel->disableOnCompletion();
+            _dmaChannel->interruptAtCompletion();
+            
+            // Enable FLEXIO for faster GPIO operations
+            CCM_CCGR5 |= (3 << 6);  // FLEXIO2 clock gate, set to 11 (always enabled)
+            
+            // Configure SPI for maximum speed
+            _spi->beginTransaction(SPISettings(
+                _config.spi.frequency,
+                MSBFIRST,
+                _config.spi.spi_mode
+            ));
+            
             _dmaInitialized = true;
         }
     }
@@ -249,17 +264,39 @@ bool TFT_Interface_SPI::initTeensy() {
 }
 
 void TFT_Interface_SPI::writeTeensy_8(uint8_t data) {
+    #if defined(__IMXRT1062__)
+    // Direct register write for faster single byte transfers
+    IMXRT_LPSPI4_S.TDR = data;
+    while ((IMXRT_LPSPI4_S.FSR & 0x1f));
+    #else
     _spi->transfer(data);
+    #endif
 }
 
 void TFT_Interface_SPI::writeTeensy_16(uint16_t data) {
+    #if defined(__IMXRT1062__)
+    // Optimized 16-bit transfer using hardware FIFO
+    IMXRT_LPSPI4_S.TDR = data >> 8;
+    IMXRT_LPSPI4_S.TDR = data & 0xFF;
+    while ((IMXRT_LPSPI4_S.FSR & 0x1f));
+    #else
     _spi->transfer16(data);
+    #endif
 }
 
 bool TFT_Interface_SPI::startDMAWrite(const uint8_t* data, size_t len) {
     #if defined(__IMXRT1062__)
     if (_dmaInitialized && len >= 32) {
+        // Optimize DMA settings for the transfer
+        _dmaChannel->disable();
         _dmaChannel->sourceBuffer((volatile uint8_t*)data, len);
+        _dmaChannel->destination(IMXRT_LPSPI4_S.TDR);
+        _dmaChannel->transferSize(4); // Use 32-bit transfers
+        _dmaChannel->transferCount(len / 4);
+        
+        // Enable TCR optimization for continuous transfer
+        IMXRT_LPSPI4_S.TCR = LPSPI_TCR_CONT;
+        
         _dmaChannel->enable();
         return true;
     }
@@ -271,6 +308,8 @@ void TFT_Interface_SPI::cleanupDMA() {
     #if defined(__IMXRT1062__)
     if (_dmaChannel) {
         _dmaChannel->disable();
+        // Reset TCR
+        IMXRT_LPSPI4_S.TCR = 0;
         delete _dmaChannel;
         _dmaChannel = nullptr;
     }
@@ -278,20 +317,19 @@ void TFT_Interface_SPI::cleanupDMA() {
 }
 
 void TFT_Interface_SPI::waitDMAComplete() {
-    #if defined(ESP32)
+    #if defined(__IMXRT1062__)
     if (_dmaInitialized) {
-        while (!_spi->DMAbsy()) {
-            yield();
-        }
-    }
-    #elif defined(CORE_TEENSY) && defined(__IMXRT1062__)
-    if (_dmaChannel) {
         while (!_dmaChannel->complete()) {
-            yield();
+            // Use ARM wait instruction directly
+            asm volatile("wfi");
         }
+        // Reset TCR after transfer
+        IMXRT_LPSPI4_S.TCR = 0;
+        _dmaChannel->clearComplete();
     }
     #endif
 }
+
 #endif
 
 void TFT_Interface_SPI::setupPins() {
