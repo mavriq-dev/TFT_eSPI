@@ -106,6 +106,11 @@ struct Config {
     bool invert_colors = false;
     uint8_t rotation = 0;
     
+    // DMA Configuration
+    bool dma_enabled = false;
+    uint32_t dma_channel = 0;  // Used by platforms that need specific DMA channel assignment
+    uint32_t dma_buffer_size = 1024;  // Default DMA buffer size
+    
     // Interface specific configuration
     SPIConfig spi;
     ParallelConfig parallel;

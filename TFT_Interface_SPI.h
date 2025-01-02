@@ -40,6 +40,21 @@ public:
     explicit TFT_Interface_SPI(const Config& config);
     ~TFT_Interface_SPI() override;
 
+    // DMA status enum
+    enum DMAStatus {
+        DMA_INACTIVE,
+        DMA_ACTIVE,
+        DMA_COMPLETE
+    };
+
+    // Static instance pointer for interrupt handling
+    static TFT_Interface_SPI* _instance;
+
+    // Public method for DMA completion handling
+    void notifyDMAComplete() {
+        _dmaStatus = DMA_COMPLETE;
+    }
+
     bool begin() override;
     void writeCommand(uint8_t cmd) override;
     void writeData(uint8_t data) override;
@@ -65,65 +80,13 @@ public:
     bool clipWindow(int32_t* xs, int32_t* ys, int32_t* xe, int32_t* ye) override;
 
 protected:
-    // Platform-specific initialization
-    bool initESP32();
-    bool initESP8266();
-    bool initRP2040();
-    bool initSAMDUE();
-    bool initAVR();
-    bool initTeensy();
-
-    // Platform-specific write functions
-    #if defined(ESP32)
-    void writeESP32_8(uint8_t data);
-    void writeESP32_16(uint16_t data);
-    #elif defined(ESP8266)
-    void writeESP8266_8(uint8_t data);
-    void writeESP8266_16(uint16_t data);
-    #elif defined(ARDUINO_ARCH_RP2040)
-    void writeRP2040_8(uint8_t data);
-    void writeRP2040_16(uint16_t data);
-    #elif defined(STM32)
-    void writeSTM32_8(uint8_t data);
-    void writeSTM32_16(uint16_t data);
-    #elif defined(ARDUINO_SAM_DUE)
-    void writeSAMDUE_8(uint8_t data);
-    void writeSAMDUE_16(uint16_t data);
-    #elif defined(__AVR__)
-    void writeAVR_8(uint8_t data);
-    void writeAVR_16(uint16_t data);
-    #elif defined(CORE_TEENSY)
-    #if defined(__IMXRT1062__)
-    void writeTeensy40_8(uint8_t data);
-    void writeTeensy40_16(uint16_t data);
-    #elif defined(__MK66FX1M0__)
-    void writeTeensy36_8(uint8_t data);
-    void writeTeensy36_16(uint16_t data);
-    #elif defined(__MK64FX512__)
-    void writeTeensy35_8(uint8_t data);
-    void writeTeensy35_16(uint16_t data);
-    #elif defined(__MK20DX256__)
-    void writeTeensy32_8(uint8_t data);
-    void writeTeensy32_16(uint16_t data);
-    #elif defined(__MK20DX128__)
-    void writeTeensy30_8(uint8_t data);
-    void writeTeensy30_16(uint16_t data);
-    #endif
-    #endif
-
-    // Platform-specific read methods
-    uint8_t readESP32_8();
-    uint16_t readESP32_16();
-    uint8_t readESP8266_8();
-    uint16_t readESP8266_16();
-    uint8_t readRP2040_8();
-    uint16_t readRP2040_16();
-    uint8_t readSAMDUE_8();
-    uint16_t readSAMDUE_16();
-    uint8_t readAVR_8();
-    uint16_t readAVR_16();
-    uint8_t readTeensy_8();
-    uint16_t readTeensy_16();
+    bool init();
+    
+    // Core write/read functions
+    void write8(uint8_t data);
+    void write16(uint16_t data);
+    uint8_t read8();
+    uint16_t read16();
 
     // DMA support methods
     void initDMA();
@@ -135,9 +98,13 @@ protected:
     void setSPISettings();
     void beginSPITransaction();
     void endSPITransaction();
+    #if defined(__MK66FX1M0__)
+    void setupFIFO();  // Setup FIFO for Teensy 3.6
+    #endif
 
     // DMA related members
     bool _dmaInitialized;  // Tracks DMA initialization state across platforms
+    volatile DMAStatus _dmaStatus; // Tracks current DMA transfer status
 
 private:
     // Pin configuration
@@ -157,50 +124,30 @@ private:
 
     // Platform-specific members
     #if defined(ESP32)
-        spi_device_handle_t _spi_handle;
-        lldesc_t* _dmadesc;
-        uint8_t* _dmaBuf;
-        bool _dmaInitialized;
+    spi_device_handle_t _spi_handle;
+    lldesc_t* _dmadesc;
+    uint8_t* _dmaBuf;
+    bool _dmaInitialized;
     #elif defined(ARDUINO_ARCH_RP2040)
-        spi_inst_t* _spi_inst;
-        uint _dma_tx;
-        uint _dma_rx;
-        bool _dmaInitialized;
-    #elif defined(CORE_TEENSY) && defined(__IMXRT1062__)
-        DMAChannel* _dmaChannel;
-        bool _dmaInitialized;
-    #elif defined(CORE_TEENSY) && defined(__MK66FX1M0__)  // Teensy 3.6
-        DMAChannel* _dmaChannel;
-        uint32_t _dmaBufSize;
-        uint8_t* _dmaBuf;
-        size_t _dmaRemaining;  // Track remaining bytes to transfer
-        size_t _dmaSent;      // Track bytes already sent
-        volatile uint32_t* _spiBaseReg;  // Base register for SPI
-        volatile uint32_t* _spiSR;       // Status register
-        volatile uint32_t* _spiDR;       // Data register
-        volatile uint32_t* _spiMCR;      // Module configuration register
-        enum DMAStatus {
-            DMA_INACTIVE = 0,
-            DMA_ACTIVE = 1,
-            DMA_COMPLETE = 2
-        };
-        volatile DMAStatus _dmaStatus;  // Track DMA transfer status
-        
-        // Optimized SPI write functions
-        inline void fastSPIwrite(uint8_t data) {
-            while (!(*_spiSR & SPI_SR_TFFF)) ; // Wait for transmit FIFO not full
-            *_spiDR = data;
-        }
-        
-        inline void fastSPIwrite16(uint16_t data) {
-            while (!(*_spiSR & SPI_SR_TFFF)) ; // Wait for transmit FIFO not full
-            *_spiDR = data;
-        }
-        
-        // DMA optimization functions
-        void initTeensyDMA();
-        void setupTeensyFIFO();
-        static void _dmaInterruptHandlerTeensy36();
+    spi_inst_t* _spi_inst;
+    uint _dma_tx;
+    uint _dma_rx;
+    bool _dmaInitialized;
+    #elif defined(CORE_TEENSY)
+    #if defined(__IMXRT1062__)
+    DMAChannel* _dmaChannel;
+    bool _dmaInitialized;
+    #elif defined(__MK66FX1M0__)  // Teensy 3.6
+    DMAChannel* _dmaChannel;
+    uint32_t _dmaBufSize;
+    uint8_t* _dmaBuf;
+    size_t _dmaRemaining;  // Track remaining bytes to transfer
+    size_t _dmaSent;      // Track bytes already sent
+    volatile uint32_t* _spiBaseReg;  // Base register for SPI
+    volatile uint32_t* _spiSR;       // Status register
+    volatile uint32_t* _spiDR;       // Data register
+    volatile uint32_t* _spiMCR;      // Module configuration register
+    #endif
     #endif
 
     // Viewport management
@@ -208,7 +155,6 @@ private:
     bool _vpDatum;
     bool _vpActive;
 
-    static TFT_Interface_SPI* _instance;
 };
 
 } // namespace TFT_Runtime

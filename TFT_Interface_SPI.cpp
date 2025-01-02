@@ -1,13 +1,26 @@
 #include "TFT_Interface_SPI.h"
 #include <Arduino.h>
 
+// DMA Interrupt Handlers for different platforms
+static void _dmaInterruptHandler() {
+    #if defined(CORE_TEENSY)
+        #if defined(__MK66FX1M0__)  // Teensy 3.6
+            if (TFT_Runtime::TFT_Interface_SPI::_instance) {
+                TFT_Runtime::TFT_Interface_SPI::_instance->notifyDMAComplete();
+            }
+        #endif
+    #endif
+
+}
+
+
 namespace TFT_Runtime {
 
 // Initialize static member
 TFT_Interface_SPI* TFT_Interface_SPI::_instance = nullptr;
 
-TFT_Interface_SPI::TFT_Interface_SPI(const Config& config)
-    : TFT_Interface(config)
+TFT_Interface_SPI::TFT_Interface_SPI(const Config& config) : TFT_Interface(config) 
+
     , _csPin(config.spi.cs_pin)
     , _dcPin(config.spi.dc_pin)
     , _mosiPin(config.spi.mosi_pin)
@@ -47,19 +60,19 @@ TFT_Interface_SPI::TFT_Interface_SPI(const Config& config)
     #elif defined(CORE_TEENSY) && defined(__MK64FX512__)
         _dmaChannel = nullptr;
         _dmaInitialized = false;
-        _dmaStatus = DMA_INACTIVE;
     #elif defined(CORE_TEENSY) && defined(__MK20DX256__)
         _dmaChannel = nullptr;
         _dmaInitialized = false;
-        _dmaStatus = DMA_INACTIVE;
     #elif defined(CORE_TEENSY) && defined(__MK20DX128__)
         _dmaChannel = nullptr;
         _dmaInitialized = false;
-        _dmaStatus = DMA_INACTIVE;
     #endif
 }
 
 TFT_Interface_SPI::~TFT_Interface_SPI() {
+    if (_instance == this) {
+        _instance = nullptr;
+    }
     cleanupDMA();
 }
 
@@ -67,167 +80,157 @@ bool TFT_Interface_SPI::begin() {
     setupPins();
     setSPISettings();
 
-    // Platform-specific initialization
+    return init();
+}
+
+void TFT_Interface_SPI::write8(uint8_t data) {
     #if defined(ESP32)
-        return initESP32();
+        spi_t* spi = _spi->bus();
+        spi->dev->mosi_dlen.val = 8 - 1;
+        spi->dev->mosi_data[0] = data;
+        spi->dev->cmd.usr = 1;
+        while (spi->dev->cmd.usr);
     #elif defined(ESP8266)
-        return initESP8266();
+        SPI1W0 = data;
+        SPI1CMD |= SPIBUSY;
+        while(SPI1CMD & SPIBUSY);
     #elif defined(ARDUINO_ARCH_RP2040)
-        return initRP2040();
+        spi_get_hw(_spi_inst)->dr = (uint32_t)data;
+        while (spi_get_hw(_spi_inst)->sr & SPI_SSPSR_BSY_BITS);
+    #elif defined(STM32)
+        SPI.transfer(data);
     #elif defined(ARDUINO_SAM_DUE)
-        return initSAMDUE();
+        SPI.transfer(data);
+        while ((SPI0->SPI_SR & SPI_SR_TXEMPTY) == 0);
     #elif defined(__AVR__)
-        return initAVR();
+        SPDR = data;
+        while(!(SPSR & _BV(SPIF)));
     #elif defined(CORE_TEENSY)
-        return initTeensy();
+        #if defined(__IMXRT1062__)  // Teensy 4.0
+            while ((_pimxrt_spi->SR & LPSPI_SR_TDF) == 0);
+            _pimxrt_spi->TDR = data;
+            while ((_pimxrt_spi->SR & LPSPI_SR_TCF) == 0);
+            _pimxrt_spi->SR = LPSPI_SR_TCF;
+        #elif defined(__MK66FX1M0__)  // Teensy 3.6
+            // Wait if FIFO is full
+            while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
+            KINETISK_SPI0.PUSHR = data | SPI_PUSHR_CTAS(0) | SPI_PUSHR_EOQ;
+        #elif defined(__MK64FX512__)  // Teensy 3.5
+            while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
+            KINETISK_SPI0.PUSHR = data;
+            while (!(KINETISK_SPI0.SR & SPI_SR_TCF));
+            KINETISK_SPI0.SR = SPI_SR_TCF;
+        #elif defined(__MK20DX256__)  // Teensy 3.2/3.1
+            while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
+            KINETISK_SPI0.PUSHR = data;
+            while (!(KINETISK_SPI0.SR & SPI_SR_TCF));
+            KINETISK_SPI0.SR = SPI_SR_TCF;
+        #elif defined(__MK20DX128__)  // Teensy 3.0
+            while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
+            KINETISK_SPI0.PUSHR = data;
+            while (!(KINETISK_SPI0.SR & SPI_SR_TCF));
+            KINETISK_SPI0.SR = SPI_SR_TCF;
+        #endif
     #else
-        return true;
+        _spi->transfer(data);
     #endif
 }
+
+void TFT_Interface_SPI::write16(uint16_t data) {
+    #if defined(ESP32)
+        spi_t* spi = _spi->bus();
+        spi->dev->mosi_dlen.val = 16 - 1;
+        spi->dev->mosi_data[0] = data;
+        spi->dev->cmd.usr = 1;
+        while (spi->dev->cmd.usr);
+    #elif defined(ESP8266)
+        SPI1W0 = data;
+        SPI1CMD |= SPIBUSY;
+        while(SPI1CMD & SPIBUSY);
+    #elif defined(ARDUINO_ARCH_RP2040)
+        spi_get_hw(_spi_inst)->dr = (uint32_t)data;
+        while (spi_get_hw(_spi_inst)->sr & SPI_SSPSR_BSY_BITS);
+    #elif defined(STM32)
+        SPI.transfer16(data);
+    #elif defined(ARDUINO_SAM_DUE)
+        SPI.transfer16(data);
+        while ((SPI0->SPI_SR & SPI_SR_TXEMPTY) == 0);
+    #elif defined(__AVR__)
+        SPDR = data >> 8;
+        while(!(SPSR & _BV(SPIF)));
+        SPDR = data;
+        while(!(SPSR & _BV(SPIF)));
+    #elif defined(CORE_TEENSY)
+        #if defined(__IMXRT1062__)  // Teensy 4.0
+            while ((_pimxrt_spi->SR & LPSPI_SR_TDF) == 0);
+            _pimxrt_spi->TDR = data;
+            while ((_pimxrt_spi->SR & LPSPI_SR_TCF) == 0);
+            _pimxrt_spi->SR = LPSPI_SR_TCF;
+        #elif defined(__MK66FX1M0__)  // Teensy 3.6
+            // Wait if FIFO is full
+            while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
+            KINETISK_SPI0.PUSHR = data | SPI_PUSHR_CTAS(1) | SPI_PUSHR_EOQ;
+        #elif defined(__MK64FX512__)  // Teensy 3.5
+            while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
+            KINETISK_SPI0.PUSHR = data;
+            while (!(KINETISK_SPI0.SR & SPI_SR_TCF));
+            KINETISK_SPI0.SR = SPI_SR_TCF;
+        #elif defined(__MK20DX256__)  // Teensy 3.2/3.1
+            while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
+            KINETISK_SPI0.PUSHR = data;
+            while (!(KINETISK_SPI0.SR & SPI_SR_TCF));
+            KINETISK_SPI0.SR = SPI_SR_TCF;
+        #elif defined(__MK20DX128__)  // Teensy 3.0
+            while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
+            KINETISK_SPI0.PUSHR = data;
+            while (!(KINETISK_SPI0.SR & SPI_SR_TCF));
+            KINETISK_SPI0.SR = SPI_SR_TCF;
+        #endif
+    #else
+        _spi->transfer16(data);
+    #endif
+}
+
 
 void TFT_Interface_SPI::writeCommand(uint8_t cmd) {
     beginTransaction();
     digitalWrite(_dcPin, LOW);
     digitalWrite(_csPin, LOW);
-    
-    #if defined(ESP32)
-        writeESP32_8(cmd);
-    #elif defined(ESP8266)
-        writeESP8266_8(cmd);
-    #elif defined(ARDUINO_ARCH_RP2040)
-        writeRP2040_8(cmd);
-    #elif defined(ARDUINO_SAM_DUE)
-        writeSAMDUE_8(cmd);
-    #elif defined(__AVR__)
-        writeAVR_8(cmd);
-    #elif defined(CORE_TEENSY) && defined(__IMXRT1062__)
-        writeTeensy_8(cmd);
-    #elif defined(CORE_TEENSY) && defined(__MK66FX1M0__)
-        digitalWriteFast(_dcPin, LOW);    // Command mode
-        digitalWriteFast(_csPin, LOW);    // Chip select active
-        fastSPIwrite(cmd);
-        while (!(KINETISK_SPI0.SR & SPI_SR_TCF)) ; // Wait for transfer to complete
-        digitalWriteFast(_csPin, HIGH);   // Chip select inactive
-    #else
-        _spi->transfer(cmd);
-    #endif
-    
+    write8(cmd);
     digitalWrite(_csPin, HIGH);
-    endTransaction();
+    digitalWrite(_dcPin, HIGH);
 }
 
 void TFT_Interface_SPI::writeData(uint8_t data) {
-    digitalWrite(_dcPin, HIGH);
+    beginTransaction();
     digitalWrite(_csPin, LOW);
-    
-    #if defined(ESP32)
-        writeESP32_8(data);
-    #elif defined(ESP8266)
-        writeESP8266_8(data);
-    #elif defined(ARDUINO_ARCH_RP2040)
-        writeRP2040_8(data);
-    #elif defined(ARDUINO_SAM_DUE)
-        writeSAMDUE_8(data);
-    #elif defined(__AVR__)
-        writeAVR_8(data);
-    #elif defined(CORE_TEENSY) && defined(__IMXRT1062__)
-        writeTeensy_8(data);
-    #elif defined(CORE_TEENSY) && defined(__MK66FX1M0__)
-        digitalWriteFast(_dcPin, HIGH);   // Data mode
-        digitalWriteFast(_csPin, LOW);    // Chip select active
-        fastSPIwrite(data);
-        while (!(KINETISK_SPI0.SR & SPI_SR_TCF)) ; // Wait for transfer to complete
-        digitalWriteFast(_csPin, HIGH);   // Chip select inactive
-    #else
-        _spi->transfer(data);
-    #endif
-    
+    write8(data);
     digitalWrite(_csPin, HIGH);
 }
 
 void TFT_Interface_SPI::writeData16(uint16_t data) {
-    digitalWrite(_dcPin, HIGH);
+    beginTransaction();
     digitalWrite(_csPin, LOW);
-    
-    #if defined(ESP32)
-        writeESP32_16(data);
-    #elif defined(ESP8266)
-        writeESP8266_16(data);
-    #elif defined(ARDUINO_ARCH_RP2040)
-        writeRP2040_16(data);
-    #elif defined(ARDUINO_SAM_DUE)
-        writeSAMDUE_16(data);
-    #elif defined(__AVR__)
-        writeAVR_16(data);
-    #elif defined(CORE_TEENSY) && defined(__IMXRT1062__)
-        writeTeensy_16(data);
-    #elif defined(CORE_TEENSY) && defined(__MK66FX1M0__)
-        // Not implemented
-    #else
-        _spi->transfer16(data);
-    #endif
-    
+    write16(data);
     digitalWrite(_csPin, HIGH);
 }
 
 void TFT_Interface_SPI::writeDataBlock(const uint8_t* data, size_t len) {
-    if (!data || !len) return;
-
-    #if defined(CORE_TEENSY) && defined(__IMXRT1062__)  // Teensy 4.x
-        if (len > 32 && supportsDMA()) {  // Use DMA for larger transfers
-            startDMAWrite(data, len);
-            return;
-        }
-        
-        digitalWriteFast(_dcPin, HIGH);   // Data mode
-        digitalWriteFast(_csPin, LOW);    // Chip select active
-        
-        while (len--) {
-            writeTeensy_8(*data++);
-        }
-        
-        digitalWriteFast(_csPin, HIGH);   // Chip select inactive
-    #elif defined(CORE_TEENSY) && defined(__MK66FX1M0__)  // Teensy 3.6
-        if (len > 32 && supportsDMA()) {  // Use DMA for larger transfers
-            startDMAWrite(data, len);
-            return;
-        }
-        
-        digitalWriteFast(_dcPin, HIGH);   // Data mode
-        digitalWriteFast(_csPin, LOW);    // Chip select active
-        
-        while (len--) {
-            fastSPIwrite(*data++);
-        }
-        
-        while (!(KINETISK_SPI0.SR & SPI_SR_TCF)) ; // Wait for transfer to complete
-        digitalWriteFast(_csPin, HIGH);   // Chip select inactive
-    #else
-        digitalWrite(_dcPin, HIGH);
-        digitalWrite(_csPin, LOW);
-
-        if (supportsDMA() && startDMAWrite(data, len)) {
-            waitDMAComplete();
-        } else {
-            for(size_t i = 0; i < len; i++) {
-                _spi->transfer(data[i]);
-            }
-        }
-
-        digitalWrite(_csPin, HIGH);
-    #endif
-}
-
-void TFT_Interface_SPI::writeDataBlock16(const uint16_t* data, size_t len) {
     if (len == 0) return;
 
-    digitalWrite(_dcPin, HIGH);
-    digitalWrite(_csPin, LOW);
-
-    for (size_t i = 0; i < len; i++) {
-        writeData16(data[i]);
+    #if defined(ESP32) || defined(ARDUINO_ARCH_RP2040) || defined(CORE_TEENSY)
+    if (supportsDMA() && startDMAWrite(data, len)) {
+        return;
     }
+    #endif
 
+    beginTransaction();
+    digitalWrite(_csPin, LOW);
+    
+    for (size_t i = 0; i < len; i++) {
+        write8(data[i]);
+    }
+    
     digitalWrite(_csPin, HIGH);
 }
 
@@ -289,251 +292,22 @@ void TFT_Interface_SPI::end_nin_write() {
 }
 
 bool TFT_Interface_SPI::supportsDMA() {
-    #if defined(ESP32) || defined(ARDUINO_ARCH_RP2040) || (defined(CORE_TEENSY) && defined(__IMXRT1062__)) || (defined(CORE_TEENSY) && defined(__MK66FX1M0__))
-        return true;
+    #if defined(ESP32)
+    return true;
+    #elif defined(ARDUINO_ARCH_RP2040)
+    return true;
+    #elif defined(CORE_TEENSY)
+    #if defined(__IMXRT1062__) || defined(__MK66FX1M0__)
+    return true;
     #else
-        return false;
+    return false;
+    #endif
+    #else
+    return false;
     #endif
 }
 
-// Platform-specific implementations
-#if defined(ESP32)
-void TFT_Interface_SPI::writeESP32_8(uint8_t data) {
-    spi_t* spi = _spi->bus();
-    spi->dev->mosi_dlen.val = 8 - 1;
-    spi->dev->mosi_data[0] = data;
-    spi->dev->cmd.usr = 1;
-    while (spi->dev->cmd.usr);
-}
-
-void TFT_Interface_SPI::writeESP32_16(uint16_t data) {
-    spi_t* spi = _spi->bus();
-    spi->dev->mosi_dlen.val = 16 - 1;
-    spi->dev->mosi_data[0] = data;
-    spi->dev->cmd.usr = 1;
-    while (spi->dev->cmd.usr);
-}
-#endif
-
-#if defined(ESP8266)
-void TFT_Interface_SPI::writeESP8266_8(uint8_t data) {
-    SPI1W0 = data;
-    SPI1CMD |= SPIBUSY;
-    while(SPI1CMD & SPIBUSY);
-}
-
-void TFT_Interface_SPI::writeESP8266_16(uint16_t data) {
-    SPI1W0 = data;
-    SPI1CMD |= SPIBUSY;
-    while(SPI1CMD & SPIBUSY);
-}
-#endif
-
-#if defined(ARDUINO_ARCH_RP2040)
-void TFT_Interface_SPI::writeRP2040_8(uint8_t data) {
-    spi_get_hw(_spi_inst)->dr = (uint32_t)data;
-    while (spi_get_hw(_spi_inst)->sr & SPI_SSPSR_BSY_BITS);
-}
-
-void TFT_Interface_SPI::writeRP2040_16(uint16_t data) {
-    spi_get_hw(_spi_inst)->dr = (uint32_t)data;
-    while (spi_get_hw(_spi_inst)->sr & SPI_SSPSR_BSY_BITS);
-}
-#endif
-
-#if defined(STM32)
-void TFT_Interface_SPI::writeSTM32_8(uint8_t data) {
-    SPI.transfer(data);
-}
-
-void TFT_Interface_SPI::writeSTM32_16(uint16_t data) {
-    SPI.transfer16(data);
-}
-#endif
-
-#if defined(ARDUINO_SAM_DUE)
-void TFT_Interface_SPI::writeSAMDUE_8(uint8_t data) {
-    SPI.transfer(data);
-    while ((SPI0->SPI_SR & SPI_SR_TXEMPTY) == 0);
-}
-
-void TFT_Interface_SPI::writeSAMDUE_16(uint16_t data) {
-    SPI.transfer16(data);
-    while ((SPI0->SPI_SR & SPI_SR_TXEMPTY) == 0);
-}
-#endif
-
-#if defined(__AVR__)
-void TFT_Interface_SPI::writeAVR_8(uint8_t data) {
-    SPDR = data;
-    while(!(SPSR & _BV(SPIF)));
-}
-
-void TFT_Interface_SPI::writeAVR_16(uint16_t data) {
-    SPDR = data >> 8;
-    while(!(SPSR & _BV(SPIF)));
-    SPDR = data;
-    while(!(SPSR & _BV(SPIF)));
-}
-#endif
-
-#if defined(CORE_TEENSY)
-
-#if defined(__IMXRT1062__)  // Teensy 4.0
-void TFT_Interface_SPI::writeTeensy40_8(uint8_t data) {
-    while ((_pimxrt_spi->SR & LPSPI_SR_TDF) == 0);
-    _pimxrt_spi->TDR = data;
-    while ((_pimxrt_spi->SR & LPSPI_SR_TCF) == 0);
-    _pimxrt_spi->SR = LPSPI_SR_TCF;
-}
-
-void TFT_Interface_SPI::writeTeensy40_16(uint16_t data) {
-    while ((_pimxrt_spi->SR & LPSPI_SR_TDF) == 0);
-    _pimxrt_spi->TDR = data;
-    while ((_pimxrt_spi->SR & LPSPI_SR_TCF) == 0);
-    _pimxrt_spi->SR = LPSPI_SR_TCF;
-}
-#endif
-
-#if defined(__MK66FX1M0__)  // Teensy 3.6
-// void TFT_Interface_SPI::initTeensyDMA() {
-//     if (_dmaInitialized) return;
-
-//     // Initialize DMA channel
-//     _dmaChannel = new DMAChannel();
-//     if (!_dmaChannel) return;
-
-//     // Configure DMA channel
-//     _dmaChannel->disable();
-//     _dmaChannel->destination(KINETISK_SPI0.PUSHR);
-//     _dmaChannel->disableOnCompletion();
-//     _dmaChannel->triggerAtHardwareEvent(DMAMUX_SOURCE_SPI0_TX);
-    
-//     // Set up SPI registers for DMA
-//     _spiBaseReg = &KINETISK_SPI0.S;
-//     _spiSR = &KINETISK_SPI0.SR;
-//     _spiDR = &KINETISK_SPI0.PUSHR;
-//     _spiMCR = &KINETISK_SPI0.MCR;
-    
-//     // Configure SPI for DMA operation
-//     KINETISK_SPI0.SR = SPI_SR_TCF | SPI_SR_EOQF | SPI_SR_TFUF | SPI_SR_TFFF | SPI_SR_RFOF | SPI_SR_RFDF;
-//     KINETISK_SPI0.RSER = SPI_RSER_TFFF_RE | SPI_RSER_TFFF_DIRS; // Enable DMA request on TFFF
-
-//     _dmaStatus = DMA_INACTIVE;
-//     _dmaInitialized = true;
-    
-//     // Attach interrupt handler
-//     _dmaChannel->attachInterrupt(_dmaInterruptHandlerTeensy36);
-// }
-
-void TFT_Interface_SPI::_dmaInterruptHandlerTeensy36() {
-    if (_instance) {
-        _instance->_dmaStatus = DMA_COMPLETE;
-        _instance->_dmaChannel->clearInterrupt();
-        
-        // Clear any remaining flags
-        KINETISK_SPI0.SR = SPI_SR_TCF | SPI_SR_EOQF | SPI_SR_TFUF | SPI_SR_TFFF | SPI_SR_RFOF | SPI_SR_RFDF;
-    }
-}
-
-// bool TFT_Interface_SPI::startDMAWrite(const uint8_t* data, size_t len) {
-//     if (!_dmaInitialized || !_dmaChannel || _dmaStatus == DMA_ACTIVE) return false;
-
-//     _dmaStatus = DMA_ACTIVE;
-//     _dmaChannel->sourceBuffer(const_cast<uint8_t*>(data), len);
-//     _dmaChannel->enable();
-    
-//     return true;
-// }
-
-void TFT_Interface_SPI::writeTeensy36_8(uint8_t data) {
-    // Wait if FIFO is full
-    while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
-    KINETISK_SPI0.PUSHR = data | SPI_PUSHR_CTAS(0) | SPI_PUSHR_EOQ;
-}
-
-void TFT_Interface_SPI::writeTeensy36_16(uint16_t data) {
-    // Wait if FIFO is full
-    while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
-    KINETISK_SPI0.PUSHR = data | SPI_PUSHR_CTAS(1) | SPI_PUSHR_EOQ;
-}
-#endif
-
-#if defined(__MK64FX512__)  // Teensy 3.5
-void TFT_Interface_SPI::writeTeensy35_8(uint8_t data) {
-    while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
-    KINETISK_SPI0.PUSHR = data;
-    while (!(KINETISK_SPI0.SR & SPI_SR_TCF));
-    KINETISK_SPI0.SR = SPI_SR_TCF;
-}
-
-void TFT_Interface_SPI::writeTeensy35_16(uint16_t data) {
-    while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
-    KINETISK_SPI0.PUSHR = data;
-    while (!(KINETISK_SPI0.SR & SPI_SR_TCF));
-    KINETISK_SPI0.SR = SPI_SR_TCF;
-}
-#endif
-
-#if defined(__MK20DX256__)  // Teensy 3.2/3.1
-void TFT_Interface_SPI::writeTeensy32_8(uint8_t data) {
-    while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
-    KINETISK_SPI0.PUSHR = data;
-    while (!(KINETISK_SPI0.SR & SPI_SR_TCF));
-    KINETISK_SPI0.SR = SPI_SR_TCF;
-}
-
-void TFT_Interface_SPI::writeTeensy32_16(uint16_t data) {
-    while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
-    KINETISK_SPI0.PUSHR = data;
-    while (!(KINETISK_SPI0.SR & SPI_SR_TCF));
-    KINETISK_SPI0.SR = SPI_SR_TCF;
-}
-#endif
-
-#if defined(__MK20DX128__)  // Teensy 3.0
-void TFT_Interface_SPI::writeTeensy30_8(uint8_t data) {
-    while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
-    KINETISK_SPI0.PUSHR = data;
-    while (!(KINETISK_SPI0.SR & SPI_SR_TCF));
-    KINETISK_SPI0.SR = SPI_SR_TCF;
-}
-
-void TFT_Interface_SPI::writeTeensy30_16(uint16_t data) {
-    while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
-    KINETISK_SPI0.PUSHR = data;
-    while (!(KINETISK_SPI0.SR & SPI_SR_TCF));
-    KINETISK_SPI0.SR = SPI_SR_TCF;
-}
-#endif
-
-#endif // CORE_TEENSY
-// void TFT_Interface_SPI::writeTeensy_8(uint8_t data) {
-//     #if defined(__IMXRT1062__)
-//     // Direct register write for faster single byte transfers
-//     IMXRT_LPSPI4_S.TDR = data;
-//     while ((IMXRT_LPSPI4_S.FSR & 0x1f));
-//     #elif defined(__MK66FX1M0__)
-//     fastSPIwrite(data);
-//     while (!(KINETISK_SPI0.SR & SPI_SR_TCF)) ; // Wait for transfer to complete
-//     #else
-//     _spi->transfer(data);
-//     #endif
-// }
-
-// void TFT_Interface_SPI::writeTeensy_16(uint16_t data) {
-//     #if defined(__IMXRT1062__)
-//     // Optimized 16-bit transfer using hardware FIFO
-//     IMXRT_LPSPI4_S.TDR = data >> 8;
-//     IMXRT_LPSPI4_S.TDR = data & 0xFF;
-//     while ((IMXRT_LPSPI4_S.FSR & 0x1f));
-//     #elif defined(__MK66FX1M0__)
-//     // Not implemented
-//     #else
-//     _spi->transfer16(data);
-//     #endif
-// }
-void TFT_Interface_SPI::initTeensyDMA() {
+void TFT_Interface_SPI::initDMA() {
 #if defined(CORE_TEENSY)
     if (_dmaInitialized) return;
 
@@ -555,21 +329,38 @@ void TFT_Interface_SPI::initTeensyDMA() {
             _dmaChannel->disableOnCompletion();
             _dmaChannel->triggerAtHardwareEvent(DMAMUX_SOURCE_SPI0_TX);
             
+            // Enhanced DMA configuration
+            _dmaChannel->transferSize(4); // Use 32-bit transfers for better performance
+            _dmaChannel->transferCount(1); // Will be updated in startDMAWrite
+            _dmaChannel->interruptAtCompletion();
+            
             // Set up SPI registers for DMA
             _spiBaseReg = &SPI0_SR;
             _spiSR = &SPI0_SR;
             _spiDR = &SPI0_PUSHR;
             _spiMCR = &SPI0_MCR;
 
-            // Configure SPI for DMA operation
+            // Optimize SPI for DMA operation
+            uint32_t mcr = SPI0_MCR;
+            mcr |= SPI_MCR_DIS_TXF | SPI_MCR_DIS_RXF; // Disable FIFOs for direct access
+            mcr |= SPI_MCR_PCSIS(0x1F); // Set all CS high
+            SPI0_MCR = mcr;
+
+            // Clear all status flags
             SPI0_SR = SPI_SR_TCF | SPI_SR_EOQF | SPI_SR_TFUF | SPI_SR_TFFF | SPI_SR_RFOF | SPI_SR_RFDF;
+            
+            // Configure for optimal DMA operation
             SPI0_RSER = SPI_RSER_TFFF_RE | SPI_RSER_TFFF_DIRS; // Enable DMA request on TFFF
+            
+            // Set optimal FIFO watermarks
+            SPI0_MCR &= ~(SPI_MCR_DIS_TXF | SPI_MCR_DIS_RXF);
+            SPI0_RSER |= SPI_RSER_TFFF_RE | SPI_RSER_TFFF_DIRS;
             
             _dmaStatus = DMA_INACTIVE;
             _dmaInitialized = true;
             
-            // Attach interrupt handler
-            _dmaChannel->attachInterrupt(_dmaInterruptHandlerTeensy36);
+            // Attach optimized interrupt handler
+            _dmaChannel->attachInterrupt(_dmaInterruptHandler);
         }
     #endif
 #endif
@@ -595,8 +386,25 @@ bool TFT_Interface_SPI::startDMAWrite(const uint8_t* data, size_t len) {
     #elif defined(__MK66FX1M0__)  // Teensy 3.6
         if (!_dmaInitialized || !_dmaChannel || _dmaStatus == DMA_ACTIVE) return false;
 
+        // Calculate optimal transfer size
+        size_t transferSize = (len + 3) & ~3; // Round up to nearest multiple of 4
+        
         _dmaStatus = DMA_ACTIVE;
-        _dmaChannel->sourceBuffer(const_cast<uint8_t*>(data), len);
+        
+        // Configure for optimal burst transfers
+        _dmaChannel->transferSize(4); // 32-bit transfers
+        _dmaChannel->transferCount(transferSize / 4);
+        
+        _dmaChannel->TCD->ATTR = DMA_TCD_ATTR_SSIZE(2) | DMA_TCD_ATTR_DSIZE(2);
+        _dmaChannel->TCD->NBYTES_MLNO = 4;
+        _dmaChannel->TCD->CSR |= DMA_TCD_CSR_MAJORELINK;
+        
+        // Set source buffer with optimized alignment
+        _dmaChannel->sourceBuffer(const_cast<uint8_t*>(data), transferSize);
+        
+        // Clear any pending flags before starting
+        SPI0_SR = SPI_SR_TCF | SPI_SR_EOQF | SPI_SR_TFUF | SPI_SR_TFFF | SPI_SR_RFOF | SPI_SR_RFDF;
+        
         _dmaChannel->enable();
         
         return true;
@@ -646,43 +454,67 @@ void TFT_Interface_SPI::waitDMAComplete() {
 #endif
 }
 
+
+bool TFT_Interface_SPI::init() {
 #if defined(CORE_TEENSY)
-bool TFT_Interface_SPI::initTeensy() {
-#if defined(__IMXRT1062__)
-    if (supportsDMA()) {
-        _dmaChannel = new DMAChannel();
-        if (_dmaChannel) {
-            _dmaChannel->begin();
-            // Configure DMA for optimal performance on Teensy 4/4.1
-            _dmaChannel->triggerAtHardwareEvent(DMAMUX_SOURCE_LPSPI4_TX);
-            _dmaChannel->transferSize(4); // 32-bit transfers for better throughput
-            _dmaChannel->transferCount(1);
-            _dmaChannel->disableOnCompletion();
-            _dmaChannel->interruptAtCompletion();
-            
-            // Enable FLEXIO for faster GPIO operations
-            CCM_CCGR5 |= (3 << 6);  // FLEXIO2 clock gate, set to 11 (always enabled)
-            
-            // Configure SPI for maximum speed
-            _spi->beginTransaction(SPISettings(
-                _config.spi.frequency,
-                MSBFIRST,
-                _config.spi.spi_mode
-            ));
-            
-            _dmaInitialized = true;
+    #if defined(__IMXRT1062__)
+        if (supportsDMA()) {
+            _dmaChannel = new DMAChannel();
+            if (_dmaChannel) {
+                _dmaChannel->begin();
+                // Configure DMA for optimal performance on Teensy 4/4.1
+                _dmaChannel->triggerAtHardwareEvent(DMAMUX_SOURCE_LPSPI4_TX);
+                _dmaChannel->transferSize(4); // 32-bit transfers for better throughput
+                _dmaChannel->transferCount(1);
+                _dmaChannel->disableOnCompletion();
+                _dmaChannel->interruptAtCompletion();
+                
+                // Enable FLEXIO for faster GPIO operations
+                CCM_CCGR5 |= (3 << 6);  // FLEXIO2 clock gate, set to 11 (always enabled)
+                
+                // Configure SPI for maximum speed
+                _spi->beginTransaction(SPISettings(
+                    _config.spi.frequency,
+                    MSBFIRST,
+                    _config.spi.spi_mode
+                ));
+                
+                _dmaInitialized = true;
+            }
         }
-    }
-#elif defined(__MK66FX1M0__)
-    if (supportsDMA()) {
-        initTeensyDMA();
-        setupTeensyFIFO();
-    }
+    #elif defined(__MK66FX1M0__)
+        if (supportsDMA()) {
+            initDMA();
+            setupFIFO();
+        }
 #endif
     return true;
+#endif
 }
 
-#endif
+
+void TFT_Interface_SPI::setupFIFO() {
+    #if defined(CORE_TEENSY)
+        #if defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)
+            // Teensy 3.x series specific FIFO setup
+            uint32_t mcr = *_spiMCR;
+            mcr &= ~SPI_MCR_MDIS;
+            *_spiMCR = mcr;
+
+            // Configure FIFO watermarks - using direct register access
+            // These definitions should be provided by kinetis.h
+            #if defined(SPI_RSER_TFFF_RE)
+                uint32_t rser = SPI0_RSER;
+                rser &= ~(SPI_RSER_TFFF_RE | SPI_RSER_RFDF_RE | 
+                         SPI_RSER_TFFF_DIRS | SPI_RSER_RFDF_DIRS);
+                SPI0_RSER = rser;
+            #endif
+        #elif defined(ARDUINO_TEENSY40) || defined(ARDUINO_TEENSY41)
+            // Teensy 4.x specific FIFO setup if needed
+            // Currently no specific FIFO setup needed
+        #endif
+    #endif
+}
 
 void TFT_Interface_SPI::setupPins() {
     pinMode(_csPin, OUTPUT);
