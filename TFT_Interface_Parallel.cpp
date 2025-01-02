@@ -4,136 +4,35 @@
 #include "TFT_Interface_Parallel.h"
 #include <Arduino.h>
 
-#if defined(CORE_TEENSY)
-    #if defined(__MK64FX512__) || defined(__MK66FX1M0__)
-        // DMA register definitions for Teensy 3.5/3.6
-        #ifndef DMA_CSR_INTMAJOR
-        #define DMA_CSR_INTMAJOR    ((uint16_t)(1<<2))
-        #endif
-        #ifndef DMA_ATTR_SSIZE
-        #define DMA_ATTR_SSIZE(n)   (((n) & 0x7)<<0)
-        #endif
-        #ifndef DMA_ATTR_DSIZE
-        #define DMA_ATTR_DSIZE(n)   (((n) & 0x7)<<3)
-        #endif
-    #endif
-#endif
-
-#if defined(CORE_TEENSY)
-    #if defined(__IMXRT1062__)
-        // Teensy 4.x DMA interrupt handler is defined by the core library
-        extern "C" void dmaInterruptHandler(void);
-    #endif
-#endif
-
 namespace TFT_Runtime {
-
-// Static member initialization
-TFT_Interface_Parallel* TFT_Interface_Parallel::_dmaActiveInstance = nullptr;
-
-#if defined(CORE_TEENSY) && (defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__))
-void dmaInterruptHandler(void) {  // Implementation without namespace qualification
-    if (TFT_Runtime::TFT_Interface_Parallel::_dmaActiveInstance) {
-        TFT_Runtime::TFT_Interface_Parallel::_dmaActiveInstance->dmaInterrupt();
-    }
-}
-#endif
 
 // Forward declarations
 void TFT_Interface_Parallel::dmaInterrupt() {
 #if defined(CORE_TEENSY)
-    #if defined(__IMXRT1062__)  // Teensy 4.x
-        if (_dmaChannel && _dmaChannel->complete()) {
-            _dmaChannel->clearComplete();
-            _dmaChannel->clearInterrupt();
-            
-            // Switch DMA buffers if double buffering
-            if (_dmaBuffer1 && _dmaBuffer2) {
-                _currentDmaBuffer = (_currentDmaBuffer == _dmaBuffer1) ? _dmaBuffer2 : _dmaBuffer1;
-                _dmaBufferReady = true;
-            }
-        }
-    #elif defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)  // All Teensy 3.x
-        if (_dmaChannel && _dmaChannel->complete()) {
-            _dmaChannel->clearInterrupt();
-            _dmaChannel->clearComplete();
-            
-            // Common DMA handling for all Teensy 3.x series
-            if (_dmaBuffer1 && _dmaBuffer2) {
-                _currentDmaBuffer = (_currentDmaBuffer == _dmaBuffer1) ? _dmaBuffer2 : _dmaBuffer1;
-                _dmaBufferReady = true;
-                
-                // Configure next transfer if needed
-                if (_dmaBufferReady) {
-                    _dmaChannel->TCD->SADDR = _currentDmaBuffer;
-                    _dmaChannel->TCD->DADDR = _dataPort;
-                }
-            }
-        }
-    #endif
-#endif
-
-    if (supportsDMA()) {
-        if (!_dmaInitialized) {
-            // Allocate DMA channel
-            _dmaChannel = new DMAChannel();
-            if (_dmaChannel == nullptr) return;
-
-            _dmaChannel->disable();
-            
-            #if defined(__IMXRT1062__)
-                // Teensy 4.x specific DMA setup
-                _dmaChannel->destination(*(volatile uint32_t*)(&FLEXIO2_SHIFTBUF0 + _flexIOShifter));
-                _dmaChannel->triggerAtHardwareEvent(45); // FlexIO2 DMA request channel
-                FLEXIO2_SHIFTSDEN |= (1 << _flexIOShifter);  // Enable DMA request
-            #elif defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)  // Teensy 3.6/3.5 / 3.2 / 3.0
-                // Teensy 3.6/3.5 specific DMA setup
-                _dmaChannel->destination(*(volatile uint32_t*)&GPIOD_PDOR);
-                _dmaChannel->triggerAtHardwareEvent(DMAMUX_SOURCE_FTM0_CH7);
-            #elif defined(ARDUINO_ARCH_ESP32)
-                // ESP32 specific setup - using I2S parallel mode
-                // ESP32 doesn't use the same DMA setup, handled elsewhere
-                return;
-            #elif defined(ARDUINO_ARCH_ESP8266)
-                // ESP8266 doesn't support DMA for this purpose
-                return;
-            #elif defined(ARDUINO_ARCH_STM32)
-                // STM32 specific DMA setup would go here
-                // Currently not implemented
-                return;
-            #elif defined(ARDUINO_ARCH_RP2040)
-                // RP2040 specific DMA setup would go here
-                // Currently not implemented
-                return;
-            #elif defined(ARDUINO_SAM_DUE)
-                // Due specific DMA setup would go here
-                // Currently not implemented
-                return;
-            #elif defined(ARDUINO_AVR_MEGA2560)
-                // Mega doesn't support DMA
-                return;
-            #else
-                #warning "Platform not specifically supported for DMA"
-                return;
-            #endif
-
-            _dmaChannel->disableOnCompletion();
-            
-            // Set up double buffering (common for all Teensy platforms)
-            _dmaBuffer1 = (uint8_t*)malloc(DMA_BUFFER_SIZE);
-            _dmaBuffer2 = (uint8_t*)malloc(DMA_BUFFER_SIZE);
-            if (_dmaBuffer1 && _dmaBuffer2) {
-                _currentDmaBuffer = _dmaBuffer1;
-                _dmaBufferReady = true;
-            }
-            
-            // Enable DMA interrupt for buffer switching
-            _dmaChannel->attachInterrupt(dmaInterruptHandler);
-            
-            _dmaInitialized = true;
-            _dmaActiveInstance = this;
+    // TODo add Teensy suuport
+#elif defined(ESP32)
+    if (_dmaInitialized) {
+        // Check if DMA transfer is complete
+        if (_dmaBufferReady) {
+            // Set up next transfer
+            i2s_write_expand(I2S_NUM_0, _dmaBuf, DMA_BUFFER_SIZE, 8, 8, 0, 0);
+            _dmaBufferReady = false;
         }
     }
+#elif defined(ARDUINO_ARCH_RP2040)
+    // RP2040-specific DMA handling
+    if (_dmaBufferReady) {
+        _dmaBufferReady = false;
+        // RP2040 uses its own DMA system
+    }
+#elif defined(STM32F1) || defined(STM32F4) || defined(STM32F7)
+    // STM32-specific DMA handling
+    if (_dmaBufferReady) {
+        _dmaBufferReady = false;
+        // STM32 uses its own DMA system
+    }
+#endif
+
 }
 
 TFT_Interface_Parallel::TFT_Interface_Parallel(const Config& config)
@@ -169,13 +68,6 @@ TFT_Interface_Parallel::TFT_Interface_Parallel(const Config& config)
     _sm = 0;
     _dma_chan = 0;
     _pioInitialized = false;
-#elif defined(CORE_TEENSY)
-    #if defined(__IMXRT1062__)
-        _flexIO = nullptr;
-        _flexIOShifter = 0;
-        _flexIOTimer = 0;
-        _dmaChannel = nullptr;
-    #endif
 #endif
 }
 
@@ -190,219 +82,166 @@ bool TFT_Interface_Parallel::begin() {
 
 bool TFT_Interface_Parallel::initInterface() {
 #if defined(ESP32)
-    //TODO Implement ESP32 parallel interface
-#elif defined(ESP8266)
-    //TODO Implement ESP8266 parallel interface
-#elif defined(ARDUINO_ARCH_RP2040)
-    //TODO Implement RP2040 parallel interface
-#elif defined(ARDUINO_SAM_DUE)
-    //TODO Implement DUE parallel interface
-#elif defined(__AVR__)
-    //TODO Implement AVR parallel interface
-#elif defined(CORE_TEENSY)
-    #if defined(__IMXRT1062__)
-        // Teensy 4.0/4.1
-        // Initialize FlexIO for parallel interface
-        _flexIO = new FlexIOHandler();
-        if (!_flexIO) return false;
+    // ESP32 parallel interface using I2S - optimized settings
+    
+    // Enhanced DMA settings for better performance
+    const size_t dma_buf_count = 4;  // Optimal buffer count for ESP32
+    const size_t dma_buf_len = 4096; // Increased for better throughput
+    const size_t total_dma_size = dma_buf_count * dma_buf_len;
+    
+    i2s_config_t i2s_config = {
+        .mode = static_cast<i2s_mode_t>(I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_RX),
+        .sample_rate = 40000000,  // Maximum reliable speed for parallel interface
+        .bits_per_sample = I2S_BITS_PER_SAMPLE_8BIT,
+        .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT,
+        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1 | ESP_INTR_FLAG_IRAM,  // Added IRAM flag for better performance
+        .dma_buf_count = dma_buf_count,
+        .dma_buf_len = dma_buf_len,
+        .use_apll = true,  // Use APLL for better clock accuracy
+        .tx_desc_auto_clear = true,
+        .fixed_mclk = 0
+    };
 
-        // Configure FlexIO for optimal performance
-        if (!_flexIO->begin()) return false;
+    // Initialize I2S with parallel mode
+    esp_err_t err = i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
+    if (err != ESP_OK) {
+        log_e("I2S driver installation failed with error: %d", err);
+        return false;
+    }
 
-        // Configure shifters for data pins
-        uint8_t dataShifter = _flexIO->addShifter(FlexIOHandler::ShifterMode::Output);
-        if (dataShifter == 0xFF) return false;
+    // Configure GPIO matrix for optimal performance
+    err = i2s_set_pin(I2S_NUM_0, NULL);
+    if (err != ESP_OK) {
+        log_e("I2S pin configuration failed with error: %d", err);
+        i2s_driver_uninstall(I2S_NUM_0);
+        return false;
+    }
 
-        // Configure timer for control signals
-        uint8_t controlTimer = _flexIO->addTimer(FlexIOHandler::TimerMode::Trigger);
-        if (controlTimer == 0xFF) return false;
+    // Configure GPIO pins for parallel interface with optimized settings
+    gpio_config_t io_conf = {
+        .pin_bit_mask = 0,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
 
-        // Configure shifter for parallel data output
-        _flexIO->setShifterConfig(dataShifter, 
-            static_cast<uint32_t>(FlexIOHandler::ShifterConfig::Width8Bit | 
-                                 FlexIOHandler::ShifterConfig::PinOutput));
+    // Set up data pins with consecutive GPIO pins when possible for better performance
+    uint64_t pin_mask = 0;
+    for (int i = 0; i < 8; i++) {
+        pin_mask |= (1ULL << _dataPins[i]);
+    }
+    io_conf.pin_bit_mask = pin_mask;
+    
+    err = gpio_config(&io_conf);
+    if (err != ESP_OK) {
+        log_e("GPIO configuration failed with error: %d", err);
+        i2s_driver_uninstall(I2S_NUM_0);
+        return false;
+    }
 
-        // Configure timer for control signals
-        _flexIO->setTimerConfig(controlTimer,
-            static_cast<uint32_t>(FlexIOHandler::TimerConfig::Trigger | 
-                                 FlexIOHandler::TimerConfig::PinOutput));
+    // Allocate DMA buffer with alignment
+    _dmaBuf = (uint8_t*)heap_caps_aligned_alloc(16, total_dma_size, MALLOC_CAP_DMA);
+    if (!_dmaBuf) {
+        log_e("DMA buffer allocation failed");
+        i2s_driver_uninstall(I2S_NUM_0);
+        return false;
+    }
 
-        // Set up optimal timing parameters
-        uint32_t clock = F_CPU_ACTUAL;  // Start with CPU clock
-        uint32_t targetFreq = 80000000;  // Target 80MHz operation
-        uint32_t divider = ((clock + targetFreq - 1) / targetFreq);
-        if (divider < 1) divider = 1;
+    // Create DMA descriptor with proper alignment
+    _dmadesc = (lldesc_t*)heap_caps_aligned_alloc(16, sizeof(lldesc_t), MALLOC_CAP_DMA);
+    if (!_dmadesc) {
+        log_e("DMA descriptor allocation failed");
+        heap_caps_free(_dmaBuf);
+        _dmaBuf = nullptr;
+        i2s_driver_uninstall(I2S_NUM_0);
+        return false;
+    }
 
-        _flexIO->setTimerConfig(
-            _flexIOTimer,
-            static_cast<uint32_t>(FlexIOHandler::TimerConfig::Trigger | 
-                                 FlexIOHandler::TimerConfig::PinOutput));
+    // Configure DMA descriptor with size-limited chunks
+    const size_t max_chunk_size = 4095; // Maximum size for 12-bit field
+    size_t remaining_size = total_dma_size;
+    size_t chunk_size = (remaining_size > max_chunk_size) ? max_chunk_size : remaining_size;
+    
+    _dmadesc->size = chunk_size;
+    _dmadesc->length = chunk_size;
+    _dmadesc->buf = _dmaBuf;
+    _dmadesc->eof = (remaining_size <= max_chunk_size) ? 1 : 0;
+    _dmadesc->sosf = 0;
+    _dmadesc->owner = 1;
+    _dmadesc->qe.stqe_next = nullptr;
+    _dmadesc->offset = 0;
 
-        // Configure DMA for optimal performance
-        if (_dmaChannel) {
-            _dmaChannel->disable();
-
-            // Use the correct register type for DMA destination
-        }
-    #elif defined(__MK66FX1M0__) || defined(__MK64FX512__)  // Teensy 3.6/3.5
-        // Initialize GPIO port for data pins
-        _basePort = digitalPinToPort(_dataPins[0]);
-        _pinsOnSamePort = true;
-        
-        // Verify all pins are on the same port
-        for (int i = 1; i < 8; i++) {
-            if (digitalPinToPort(_dataPins[i]) != _basePort) {
-                _pinsOnSamePort = false;
-                return false;  // All pins must be on the same port
-            }
-        }
-        
-        _dataPort = reinterpret_cast<volatile uint32_t*>(portOutputRegister(_basePort));
-        _dataPortSet = reinterpret_cast<volatile uint32_t*>(portSetRegister(_basePort));
-        _dataPortClr = reinterpret_cast<volatile uint32_t*>(portClearRegister(_basePort));
-        
-        // Calculate data pin mask and shift
-        _dataPinMask = 0;
-        uint8_t minPin = 32, maxPin = 0;
-        for (int i = 0; i < 8; i++) {
-            uint8_t pin = _dataPins[i] % 32;  // Get pin number within the port
-            _dataPinMask |= (1UL << pin);
-            minPin = min(minPin, pin);
-            maxPin = max(maxPin, pin);
-        }
-        _dataPinShift = minPin;
-
-        // Configure FTM0 for DMA triggering with optimized settings
-        FTM0_SC = 0;
-        FTM0_CNT = 0;
-        #if defined(__MK66FX1M0__)  // Teensy 3.6
-            FTM0_MOD = F_BUS / 60000000;  // Target 60MHz operation for Teensy 3.6 (180MHz CPU)
-        #elif defined(__MK64FX512__)  // Teensy 3.5
-            FTM0_MOD = F_BUS / 40000000;  // Target 40MHz operation for Teensy 3.5 (120MHz CPU)
-        #else
-            FTM0_MOD = F_BUS / 20000000;  // Standard 20MHz for other boards
-        #endif
-        FTM0_SC = FTM_SC_CLKS(1) | FTM_SC_PS(0);  // Bus clock, no prescale
-        FTM0_C7SC = FTM_CSC_MSA | FTM_CSC_DMA;
-
-        // Set up DMA with improved error handling
-        if (!_dmaChannel) {
-            _dmaChannel = new DMAChannel();
-        }
-        if (!_dmaChannel) {
-            return false;  // DMA channel allocation failed
-        }
-
-        _dmaChannel->disable();
-        _dmaChannel->destination(*_dataPort);
-        _dmaChannel->triggerAtHardwareEvent(DMAMUX_SOURCE_FTM0_CH7);
-        _dmaChannel->transferSize(1);  // 8-bit transfers
-        _dmaChannel->transferCount(DMA_BUFFER_SIZE);
-        _dmaChannel->disableOnCompletion();
-        _dmaChannel->interruptAtCompletion();
-        _dmaChannel->attachInterrupt(dmaInterruptHandler);
-
-        // Allocate aligned DMA buffers with proper error handling
-        if (_dmaBuffer1) free(_dmaBuffer1);
-        if (_dmaBuffer2) free(_dmaBuffer2);
-        
-        _dmaBuffer1 = (uint8_t*)malloc(DMA_BUFFER_SIZE + 32);
-        _dmaBuffer2 = (uint8_t*)malloc(DMA_BUFFER_SIZE + 32);
-        
-        if (!_dmaBuffer1 || !_dmaBuffer2) {
-            if (_dmaBuffer1) free(_dmaBuffer1);
-            if (_dmaBuffer2) free(_dmaBuffer2);
-            _dmaBuffer1 = _dmaBuffer2 = nullptr;
+    // If we need more chunks, allocate additional descriptors
+    lldesc_t* current_desc = _dmadesc;
+    remaining_size -= chunk_size;
+    size_t offset = chunk_size;
+    
+    while (remaining_size > 0) {
+        lldesc_t* next_desc = (lldesc_t*)heap_caps_malloc(sizeof(lldesc_t), MALLOC_CAP_DMA);
+        if (!next_desc) {
+            log_e("Failed to allocate additional DMA descriptor");
+            // Clean up already allocated descriptors
+            cleanupDMA();
             return false;
         }
         
-        // Align buffers to 32-byte boundary
-        _dmaBuffer1 = (uint8_t*)(((uintptr_t)_dmaBuffer1 + 31) & ~31);
-        _dmaBuffer2 = (uint8_t*)(((uintptr_t)_dmaBuffer2 + 31) & ~31);
-        _currentDmaBuffer = _dmaBuffer1;
-        _dmaBufferReady = true;
+        chunk_size = (remaining_size > max_chunk_size) ? max_chunk_size : remaining_size;
         
-        // Enable DMA optimizations for Teensy 3.5
-        #if defined(__MK64FX512__)
-            if (_dmaChannel) {
-                _dmaChannel->TCD->CSR |= DMA_CSR_INTMAJOR;  // Enable interrupt at end of major loop
-                _dmaChannel->TCD->ATTR |= DMA_ATTR_SSIZE(0) | DMA_ATTR_DSIZE(0);  // 8-bit transfers
-                _dmaChannel->TCD->NBYTES_MLNO = 1;  // 1 byte per minor loop
-                _dmaChannel->TCD->SLAST = 0;  // Don't adjust source address at end of major loop
-                _dmaChannel->TCD->DLASTSGA = 0;  // Don't adjust dest address at end of major loop
-                _dmaChannel->TCD->BITER_ELINKNO = DMA_BUFFER_SIZE;  // Major loop count
-                _dmaChannel->TCD->CITER_ELINKNO = DMA_BUFFER_SIZE;  // Current iteration count
-            }
-        #endif
+        next_desc->size = chunk_size;
+        next_desc->length = chunk_size;
+        next_desc->buf = _dmaBuf + offset;
+        next_desc->eof = (remaining_size <= max_chunk_size) ? 1 : 0;
+        next_desc->sosf = 0;
+        next_desc->owner = 1;
+        next_desc->qe.stqe_next = nullptr;
+        next_desc->offset = 0;
         
-        _dmaInitialized = true;
-        _dmaActiveInstance = this;
-        return true;
-    #endif
+        current_desc->qe.stqe_next = next_desc;
+        current_desc = next_desc;
+        
+        remaining_size -= chunk_size;
+        offset += chunk_size;
+    }
+
+    // Use optimal DMA channel
+    _dmaChannel = 1;
+    _dmaInitialized = true;
+    _dmaBufferReady = true;
+
+    log_i("ESP32 parallel interface initialized successfully");
+    return true;
+#elif defined(CORE_TEENSY)
+    //TODO Implement parallel interface for Teensy
+#elif defined(ARDUINO_ARCH_ESP8266)
+    // ESP8266 doesn't support DMA for this purpose
+    return true;
+#elif defined(ARDUINO_ARCH_STM32)
+    // STM32 specific DMA setup would go here
+    return true;
+#elif defined(ARDUINO_ARCH_RP2040)
+    // RP2040 specific DMA setup would go here
+    return true;
+#elif defined(ARDUINO_SAM_DUE)
+    // Due specific DMA setup would go here
+    return true;
+#elif defined(ARDUINO_AVR_MEGA2560)
+    // Mega doesn't support DMA
+    return true;
+#else
+    #warning "Platform not specifically supported for DMA"
+    return true;
 #endif
 
-    if (supportsDMA()) {
-        if (!_dmaInitialized) {
-            // Allocate DMA channel
-            _dmaChannel = new DMAChannel();
-            if (_dmaChannel == nullptr) return false;
-
-            _dmaChannel->disable();
-            
-            #if defined(__IMXRT1062__)
-                // Teensy 4.x specific DMA setup
-                _dmaChannel->destination(*(volatile uint32_t*)(&FLEXIO2_SHIFTBUF0 + _flexIOShifter));
-                _dmaChannel->triggerAtHardwareEvent(45); // FlexIO2 DMA request channel
-                FLEXIO2_SHIFTSDEN |= (1 << _flexIOShifter);  // Enable DMA request
-            #elif defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)  // Teensy 3.6/3.5 / 3.2 / 3.0
-                // Teensy 3.6/3.5 specific DMA setup
-                _dmaChannel->destination(*(volatile uint32_t*)&GPIOD_PDOR);
-                _dmaChannel->triggerAtHardwareEvent(DMAMUX_SOURCE_FTM0_CH7);
-            #elif defined(ARDUINO_ARCH_ESP32)
-                // ESP32 specific setup - using I2S parallel mode
-                // ESP32 doesn't use the same DMA setup, handled elsewhere
-                return true;
-            #elif defined(ARDUINO_ARCH_ESP8266)
-                // ESP8266 doesn't support DMA for this purpose
-                return true;
-            #elif defined(ARDUINO_ARCH_STM32)
-                // STM32 specific DMA setup would go here
-                // Currently not implemented
-                return true;
-            #elif defined(ARDUINO_ARCH_RP2040)
-                // RP2040 specific DMA setup would go here
-                // Currently not implemented
-                return true;
-            #elif defined(ARDUINO_SAM_DUE)
-                // Due specific DMA setup would go here
-                // Currently not implemented
-                return true;
-            #elif defined(ARDUINO_AVR_MEGA2560)
-                // Mega doesn't support DMA
-                return true;
-            #else
-                #warning "Platform not specifically supported for DMA"
-                return true;
-            #endif
-
-            _dmaChannel->disableOnCompletion();
-            
-            // Set up double buffering (common for all Teensy platforms)
-            _dmaBuffer1 = (uint8_t*)malloc(DMA_BUFFER_SIZE);
-            _dmaBuffer2 = (uint8_t*)malloc(DMA_BUFFER_SIZE);
-            if (_dmaBuffer1 && _dmaBuffer2) {
-                _currentDmaBuffer = _dmaBuffer1;
-                _dmaBufferReady = true;
-            }
-            
-            // Enable DMA interrupt for buffer switching
-            _dmaChannel->attachInterrupt(dmaInterruptHandler);
-            
-            _dmaInitialized = true;
-            _dmaActiveInstance = this;
-        }
+    // Common initialization for non-DMA platforms
+    if (!supportsDMA()) {
+        _dmaInitialized = false;
+        _dmaBufferReady = false;
+        return true;
     }
-    return true;
+
+    return false;  // Should not reach here
 }
 
 void TFT_Interface_Parallel::writeCommand(uint8_t cmd) {
@@ -433,30 +272,17 @@ uint8_t TFT_Interface_Parallel::readData() {
     
     uint8_t data = 0;
     #if defined(ESP32)
-        data = readESP32_8();
+        data = read8();
     #elif defined(ESP8266)
-        data = readESP8266_8();
+        data = read8();
     #elif defined(ARDUINO_ARCH_RP2040)
-        data = readRP2040_8();
+        data = read8();
     #elif defined(ARDUINO_SAM_DUE)
-        data = readSAMDUE_8();
+        data = read8();
     #elif defined(__AVR__)
-        data = readAVR_8();
+        data = read8();
     #elif defined(CORE_TEENSY)
-    #if defined(__IMXRT1062__)
-        // Teensy 4.0/4.1 specific implementation
-        for (int i = 0; i < 8; i++) {
-            if (digitalRead(_dataPins[i])) {
-                data |= (1 << i);
-            }
-        }
-    #elif defined(__MK66FX1M0__) || defined(__MK64FX512__)  // Teensy 3.6/3.5
-        // Fast port reading for Teensy 3.5/3.6
-        uint32_t port_value = *(volatile uint32_t*)portInputRegister(digitalPinToPort(_dataPins[0]));
-        port_value &= _dataPinMask;
-        port_value >>= _dataPinShift;
-        data = (uint8_t)port_value;
-    #endif
+        //TODO add Teensy support
     #else
         // Default implementation
         for (int i = 0; i < 8; i++) {
@@ -479,31 +305,17 @@ uint16_t TFT_Interface_Parallel::readData16() {
     uint16_t data = 0;
     if (_is16Bit) {
         #if defined(ESP32)
-            data = readESP32_16();
+            data = read16();
         #elif defined(ESP8266)
-            data = readESP8266_16();
+            data = read16();
         #elif defined(ARDUINO_ARCH_RP2040)
-            data = readRP2040_16();
+            data = read16();
         #elif defined(ARDUINO_SAM_DUE)
-            data = readSAMDUE_16();
+            data = read16();
         #elif defined(__AVR__)
-            data = readAVR_16();
+            data = read16();
         #elif defined(CORE_TEENSY)
-        #if defined(__IMXRT1062__)
-            // Teensy 4.0/4.1 specific implementation
-            for (int i = 0; i < 16; i++) {
-                if (digitalRead(_dataPins[i])) {
-                    data |= (1 << i);
-                }
-            }
-        #elif defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__)
-            // Teensy 3.x specific implementation
-            for (int i = 0; i < 16; i++) {
-                if (digitalRead(_dataPins[i])) {
-                    data |= (1 << i);
-                }
-            }
-        #endif
+            //TODO add Teensy support
         #else
             // Default implementation
             data = 0;
@@ -581,143 +393,120 @@ void TFT_Interface_Parallel::readDataBlock16(uint16_t* data, size_t len) {
 
 void TFT_Interface_Parallel::write8(uint8_t data) {
     #if defined(ESP32)
-        GPIO.out_w1tc = (1 << _wrPin);
-        GPIO.out_w1tc.val = _dataMask;
-        GPIO.out_w1ts.val = ((uint32_t)data << _dataShift) & _dataMask;
-        GPIO.out_w1ts = (1 << _wrPin);
+        // Use direct register manipulation for ESP32
+        gpio_set_level((gpio_num_t)_wrPin, 0);
+        for (int i = 0; i < 8; i++) {
+            if (_dataPins[i] >= 0) {
+                gpio_set_level((gpio_num_t)_dataPins[i], (data >> i) & 0x01);
+            }
+        }
+        gpio_set_level((gpio_num_t)_wrPin, 1);
     #elif defined(ESP8266)
-        GPOC = _wrPinMask;
-        GPOC = _dataMask;
-        GPOS = ((uint32_t)data << _dataShift) & _dataMask;
-        GPOS = _wrPinMask;
-    #elif defined(ARDUINO_ARCH_RP2040)
-        pio_sm_put_blocking(_pio, _sm, data);
-    #elif defined(ARDUINO_SAM_DUE)
-        REG_PIOC_CODR = _dataMask;
-        REG_PIOC_SODR = ((uint32_t)data << _dataShift) & _dataMask;
-        REG_PIOC_CODR = _wrPinMask;
-        REG_PIOC_SODR = _wrPinMask;
-    #elif defined(__AVR__)
-        *_dataPort = (*_dataPort & ~_dataMask) | ((data << _dataShift) & _dataMask);
-        *_wrPort &= ~_wrPinMask;
-        *_wrPort |= _wrPinMask;
-    #elif defined(CORE_TEENSY)
-    #if defined(__IMXRT1062__)
-        // Teensy 4.0/4.1 - Optimized FlexIO implementation
-        if (_flexIO == nullptr) return;
-
-        // Fast single byte write using FlexIO
-        _flexIO->writeShifter(_flexIOShifter, data);
-    #elif defined(__MK66FX1M0__) || defined(__MK64FX512__)  // Teensy 3.6/3.5
-        // Fast port writing for Teensy 3.5/3.6
-        uint32_t port_value = *(volatile uint32_t*)portOutputRegister(digitalPinToPort(_dataPins[0]));
-        port_value &= ~_dataPinMask;  // Clear data pins
-        port_value |= ((uint32_t)data << _dataPinShift) & _dataPinMask;  // Set new data
-        *(volatile uint32_t*)portOutputRegister(digitalPinToPort(_dataPins[0])) = port_value;
-        pulseWR();
-    #elif defined(__MK20DX256__) || defined(__MK20DX128__)
-        // Teensy 3.2/3.1/3.0
+        // ESP8266 specific implementation
+        digitalWrite(_wrPin, LOW);
+        for (int i = 0; i < 8; i++) {
+            if (_dataPins[i] >= 0) {
+                digitalWrite(_dataPins[i], (data >> i) & 0x01);
+            }
+        }
+        digitalWrite(_wrPin, HIGH);
+    #elif defined(ARDUINO_TEENSY40) || defined(ARDUINO_TEENSY41)
+        // Teensy 4.x specific implementation
         digitalWriteFast(_wrPin, LOW);
-        for(uint8_t i = 0; i < 8; i++) {
-            digitalWriteFast(_dataPins[i], (data >> i) & 0x01);
+        for (int i = 0; i < 8; i++) {
+            if (_dataPins[i] >= 0) {
+                digitalWriteFast(_dataPins[i], (data >> i) & 0x01);
+            }
         }
         digitalWriteFast(_wrPin, HIGH);
+    #else
+        // Generic implementation for other platforms
+        digitalWrite(_wrPin, LOW);
+        for (int i = 0; i < 8; i++) {
+            if (_dataPins[i] >= 0) {
+                digitalWrite(_dataPins[i], (data >> i) & 0x01);
+            }
+        }
+        digitalWrite(_wrPin, HIGH);
     #endif
-    #endif
-    
-    if (_writeDelay > 0) delayMicroseconds(_writeDelay);
+    delayWrite();
 }
 
 void TFT_Interface_Parallel::write16(uint16_t data) {
     #if defined(ESP32)
-        GPIO.out_w1tc = (1 << _wrPin);
-        GPIO.out_w1tc.val = _dataMask;
-        GPIO.out_w1ts.val = ((uint32_t)(data >> 8) << _dataShift) & _dataMask;
-        GPIO.out_w1ts = (1 << _wrPin);
-        GPIO.out_w1tc = (1 << _wrPin);
-        GPIO.out_w1tc.val = _dataMask;
-        GPIO.out_w1ts.val = ((uint32_t)(data & 0xFF) << _dataShift) & _dataMask;
-        GPIO.out_w1ts = (1 << _wrPin);
+        // ESP32 specific fast GPIO using direct register access
+        #if ESP_IDF_VERSION_MAJOR >= 4
+            gpio_set_level((gpio_num_t)_wrPin, 0);
+            for(uint8_t i = 0; i < 8; i++) {
+                if(_dataPins[i] >= 0) gpio_set_level((gpio_num_t)_dataPins[i], (data >> (8 + i)) & 0x01);
+            }
+            gpio_set_level((gpio_num_t)_wrPin, 1);
+            gpio_set_level((gpio_num_t)_wrPin, 0);
+            for(uint8_t i = 0; i < 8; i++) {
+                if(_dataPins[i] >= 0) gpio_set_level((gpio_num_t)_dataPins[i], (data >> i) & 0x01);
+            }
+            gpio_set_level((gpio_num_t)_wrPin, 1);
+        #else
+            // Legacy ESP32 GPIO handling
+            GPIO.out_w1tc = (1 << _wrPin);
+            for(uint8_t i = 0; i < 8; i++) {
+                if(_dataPins[i] >= 0) {
+                    if(data & (0x8000 >> i)) GPIO.out_w1ts = (1 << _dataPins[i]);
+                    else GPIO.out_w1tc = (1 << _dataPins[i]);
+                }
+            }
+            GPIO.out_w1ts = (1 << _wrPin);
+            GPIO.out_w1tc = (1 << _wrPin);
+            for(uint8_t i = 0; i < 8; i++) {
+                if(_dataPins[i] >= 0) {
+                    if(data & (0x80 >> i)) GPIO.out_w1ts = (1 << _dataPins[i]);
+                    else GPIO.out_w1tc = (1 << _dataPins[i]);
+                }
+            }
+            GPIO.out_w1ts = (1 << _wrPin);
+        #endif
     #elif defined(ESP8266)
-        GPOC = _wrPinMask;
-        GPOC = _dataMask;
-        GPOS = ((uint32_t)(data >> 8) << _dataShift) & _dataMask;
-        GPOS = _wrPinMask;
-        GPOC = _wrPinMask;
-        GPOC = _dataMask;
-        GPOS = ((uint32_t)(data & 0xFF) << _dataShift) & _dataMask;
-        GPOS = _wrPinMask;
-    #elif defined(ARDUINO_ARCH_RP2040)
-        pio_sm_put_blocking(_pio, _sm, data >> 8);
-        pio_sm_put_blocking(_pio, _sm, data & 0xFF);
-    #elif defined(ARDUINO_SAM_DUE)
-        REG_PIOC_CODR = _dataMask;
-        REG_PIOC_SODR = ((uint32_t)(data >> 8) << _dataShift) & _dataMask;
-        REG_PIOC_CODR = _wrPinMask;
-        REG_PIOC_SODR = _wrPinMask;
-        REG_PIOC_CODR = _dataMask;
-        REG_PIOC_SODR = ((uint32_t)(data & 0xFF) << _dataShift) & _dataMask;
-        REG_PIOC_CODR = _wrPinMask;
-        REG_PIOC_SODR = _wrPinMask;
-    #elif defined(__AVR__)
-        *_dataPort = (*_dataPort & ~_dataMask) | (((data >> 8) << _dataShift) & _dataMask);
-        *_wrPort &= ~_wrPinMask;
-        *_wrPort |= _wrPinMask;
-        *_dataPort = (*_dataPort & ~_dataMask) | (((data & 0xFF) << _dataShift) & _dataMask);
-        *_wrPort &= ~_wrPinMask;
-        *_wrPort |= _wrPinMask;
-    #elif defined(CORE_TEENSY)
-    #if defined(__IMXRT1062__)
-        // Teensy 4.0/4.1
-        _flexIO->writeShifter(_flexIOShifter, data >> 8);
-        _flexIO->writeShifter(_flexIOShifter, data & 0xFF);
-    #elif defined(__MK66FX1M0__) || defined(__MK64FX512__)  // Teensy 3.6/3.5
-        // Fast port writing for Teensy 3.5/3.6
-        uint32_t port_value = *(volatile uint32_t*)portOutputRegister(digitalPinToPort(_dataPins[0]));
-        port_value &= ~_dataPinMask;  // Clear data pins
-        port_value |= ((uint32_t)(data >> 8) << _dataPinShift) & _dataPinMask;  // Set new data
-        *(volatile uint32_t*)portOutputRegister(digitalPinToPort(_dataPins[0])) = port_value;
-        pulseWR();
-        port_value &= ~_dataPinMask;  // Clear data pins
-        port_value |= ((uint32_t)(data & 0xFF) << _dataPinShift) & _dataPinMask;  // Set new data
-        *(volatile uint32_t*)portOutputRegister(digitalPinToPort(_dataPins[0])) = port_value;
-        pulseWR();
-    #elif defined(__MK20DX256__) || defined(__MK20DX128__)
-        // Teensy 3.2/3.1/3.0
-        digitalWriteFast(_wrPin, LOW);
+        // ESP8266 specific GPIO handling
+        GPOC = (1 << _wrPin);  // WR low
         for(uint8_t i = 0; i < 8; i++) {
-            digitalWriteFast(_dataPins[i], (data >> (i + 8)) & 0x01);
+            if(_dataPins[i] >= 0) {
+                if(data & (0x8000 >> i)) GPOS = (1 << _dataPins[i]);
+                else GPOC = (1 << _dataPins[i]);
+            }
         }
-        digitalWriteFast(_wrPin, HIGH);
-        digitalWriteFast(_wrPin, LOW);
+        GPOS = (1 << _wrPin);  // WR high
+        GPOC = (1 << _wrPin);  // WR low
         for(uint8_t i = 0; i < 8; i++) {
-            digitalWriteFast(_dataPins[i], (data >> i) & 0x01);
+            if(_dataPins[i] >= 0) {
+                if(data & (0x80 >> i)) GPOS = (1 << _dataPins[i]);
+                else GPOC = (1 << _dataPins[i]);
+            }
         }
-        digitalWriteFast(_wrPin, HIGH);
+        GPOS = (1 << _wrPin);  // WR high
+    #else
+        // Generic implementation for other platforms (Teensy, STM32, RP2040, Due, Mega)
+        digitalWrite(_wrPin, LOW);
+        // Write high byte
+        for(uint8_t i = 0; i < 8; i++) {
+            if(_dataPins[i] >= 0) {
+                digitalWrite(_dataPins[i], (data >> (15 - i)) & 0x01);
+            }
+        }
+        digitalWrite(_wrPin, HIGH);
+        digitalWrite(_wrPin, LOW);
+        // Write low byte
+        for(uint8_t i = 0; i < 8; i++) {
+            if(_dataPins[i] >= 0) {
+                digitalWrite(_dataPins[i], (data >> (7 - i)) & 0x01);
+            }
+        }
+        digitalWrite(_wrPin, HIGH);
     #endif
-    #endif
-    
-    if (_writeDelay > 0) delayMicroseconds(_writeDelay);
+    delayWrite();
 }
 
 void TFT_Interface_Parallel::writeDataBlock(const uint8_t* data, size_t len) {
     if (len == 0) return;
-
-    #if defined(CORE_TEENSY) && defined(__IMXRT1062__)
-    // Teensy 4.0/4.1 - Use DMA for large transfers
-    if (_flexIO != nullptr && _dmaInitialized && len > 32) {
-        // Configure FlexIO for 8-bit parallel transfer
-        _flexIO->setShifterConfig(_flexIOShifter, FLEXIO_SHIFTCFG_PWIDTH(7));
-        // Enable DMA for shifter
-        _flexIO->writeShifter(_flexIOShifter, 0); // Clear shifter
-        // Direct hardware register access for Teensy 4.x
-        volatile uint32_t* shifterAddr = &IMXRT_FLEXIO2_S.SHIFTBUF[_flexIOShifter];
-        _dmaChannel->destinationBuffer((volatile uint8_t*)shifterAddr, len);
-        _dmaChannel->sourceBuffer(data, len);
-        _dmaChannel->enable();
-        return;
-    }
-    #endif
 
     // Default implementation - write bytes one at a time
     while (len--) {
@@ -726,178 +515,12 @@ void TFT_Interface_Parallel::writeDataBlock(const uint8_t* data, size_t len) {
 }
 
 void TFT_Interface_Parallel::setupPins() {
-    #if defined(__MK66FX1M0__) || defined(__MK64FX512__)  // Teensy 3.6/3.5
-        setupParallelBus();
-        // Configure control pins
-        if (_csPin >= 0) pinMode(_csPin, OUTPUT);
-        if (_wrPin >= 0) pinMode(_wrPin, OUTPUT);
-        if (_rdPin >= 0) pinMode(_rdPin, OUTPUT);
-        if (_rstPin >= 0) pinMode(_rstPin, OUTPUT);
-        if (_latchPin >= 0) pinMode(_latchPin, OUTPUT);
-
-        // Set default pin states
-        if (_csPin >= 0) digitalWrite(_csPin, HIGH);
-        if (_wrPin >= 0) digitalWrite(_wrPin, HIGH);
-        if (_rdPin >= 0) digitalWrite(_rdPin, HIGH);
-        if (_rstPin >= 0) {
-            digitalWrite(_rstPin, HIGH);
-            delay(5);
-            digitalWrite(_rstPin, LOW);
-            delay(20);
-            digitalWrite(_rstPin, HIGH);
-            delay(150);
-        }
-        if (_latchPin >= 0) digitalWrite(_latchPin, HIGH);
-    #endif
+    
 }
 
 void TFT_Interface_Parallel::setupParallelBus() {
     #if defined(CORE_TEENSY)
-        #if defined(__IMXRT1062__)  // Teensy 4.0
-            // Configure FlexIO for parallel interface
-            
-            // Initialize FlexIO
-            _flexIO = new FlexIOHandler();
-            if (!_flexIO->begin()) {
-                return; // Failed to initialize FlexIO
-            }
-            
-            // Initialize data pins using FlexIO
-            for (uint8_t i = 0; i < _config.parallel.bus_width; i++) {
-                if (_config.parallel.data_pins[i] != -1) {
-                    _dataPins[i] = _config.parallel.data_pins[i];
-                    pinMode(_dataPins[i], OUTPUT);
-                }
-            }
-            
-            // Configure FlexIO shifter for parallel output
-            _flexIOShifter = _flexIO->addShifter(FlexIOHandler::ShifterMode::Output);
-            if (_flexIOShifter == 0xFF) {
-                return; // Failed to add shifter
-            }
-            
-            // Configure FlexIO timer for write signal generation
-            _flexIOTimer = _flexIO->addTimer(FlexIOHandler::TimerMode::Trigger);
-            if (_flexIOTimer == 0xFF) {
-                return; // Failed to add timer
-            }
-            
-            // Configure shifter for parallel data output
-            _flexIO->setShifterConfig(_flexIOShifter, 
-                static_cast<uint32_t>(FlexIOHandler::ShifterConfig::Width8Bit | 
-                                    FlexIOHandler::ShifterConfig::TimerTrig | 
-                                    FlexIOHandler::ShifterConfig::PinOutput));
-            
-            // Configure timer for write signal generation
-            _flexIO->setTimerConfig(_flexIOTimer,
-                static_cast<uint32_t>(FlexIOHandler::TimerConfig::Trigger | 
-                                    FlexIOHandler::TimerConfig::PinOutput));
-            
-            // Configure control pins
-            if (_wrPin >= 0) {
-                pinMode(_wrPin, OUTPUT);
-                digitalWriteFast(_wrPin, HIGH);
-            }
-            if (_rdPin >= 0) {
-                pinMode(_rdPin, OUTPUT);
-                digitalWriteFast(_rdPin, HIGH);
-            }
-            if (_dcPin >= 0) {
-                pinMode(_dcPin, OUTPUT);
-            }
-            if (_csPin >= 0) {
-                pinMode(_csPin, OUTPUT);
-                digitalWriteFast(_csPin, HIGH);
-            }
-        #elif defined(__MK66FX1M0__) || defined(__MK64FX512__)  // Teensy 3.6/3.5
-            // Configure data pins using direct port access
-            _dataMask = 0;
-            _dataShift = 0;
-            uint8_t firstPin = 255;
-
-            // Configure all data pins for maximum speed
-            for (uint8_t i = 0; i < _config.parallel.bus_width; i++) {
-                if (_config.parallel.data_pins[i] != -1) {
-                    uint8_t pin = _config.parallel.data_pins[i];
-                    *portConfigRegister(pin) = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
-                    *portModeRegister(pin) |= digitalPinToBitMask(pin);  // Set to output
-                    
-                    // Track the data mask and first pin for port calculations
-                    _dataMask |= digitalPinToBitMask(pin);
-                    if (firstPin == 255) firstPin = pin;
-                }
-            }
-
-            // Set up port manipulation registers based on the first pin
-            if (firstPin != 255) {
-                _dataPort = reinterpret_cast<volatile uint32_t*>(portOutputRegister(digitalPinToPort(firstPin)));
-                _dataPortSet = reinterpret_cast<volatile uint32_t*>(portSetRegister(digitalPinToPort(firstPin)));
-                _dataPortClr = reinterpret_cast<volatile uint32_t*>(portClearRegister(digitalPinToPort(firstPin)));
-                
-                // Calculate data shift based on pin positions
-                uint32_t mask = _dataMask;
-                while (!(mask & 1)) {
-                    _dataShift++;
-                    mask >>= 1;
-                }
-            }
-
-            // Configure write pin for maximum speed
-            if (_wrPin >= 0) {
-                *portConfigRegister(_wrPin) = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
-                *portModeRegister(_wrPin) |= digitalPinToBitMask(_wrPin);
-                
-                // Set up write port manipulation registers
-                _wrPort = reinterpret_cast<volatile uint32_t*>(portOutputRegister(digitalPinToPort(_wrPin)));
-                _wrPortSet = reinterpret_cast<volatile uint32_t*>(portSetRegister(digitalPinToPort(_wrPin)));
-                _wrPortClear = reinterpret_cast<volatile uint32_t*>(portClearRegister(digitalPinToPort(_wrPin)));
-                _wrPinMask = digitalPinToBitMask(_wrPin);
-            }
-
-            // Configure read pin if used
-            if (_rdPin >= 0) {
-                *portConfigRegister(_rdPin) = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
-                *portModeRegister(_rdPin) |= digitalPinToBitMask(_rdPin);
-                
-                // Set up read port manipulation registers
-                _rdPort = reinterpret_cast<volatile uint32_t*>(portOutputRegister(digitalPinToPort(_rdPin)));
-                _rdPortSet = reinterpret_cast<volatile uint32_t*>(portSetRegister(digitalPinToPort(_rdPin)));
-                _rdPortClear = reinterpret_cast<volatile uint32_t*>(portClearRegister(digitalPinToPort(_rdPin)));
-                _rdPinMask = digitalPinToBitMask(_rdPin);
-                
-                digitalWriteFast(_rdPin, HIGH);
-            }
-
-            // Configure DC pin
-            if (_dcPin >= 0) {
-                *portConfigRegister(_dcPin) = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
-                *portModeRegister(_dcPin) |= digitalPinToBitMask(_dcPin);
-                
-                // Set up DC port manipulation registers
-                _dcPort = reinterpret_cast<volatile uint32_t*>(portOutputRegister(digitalPinToPort(_dcPin)));
-                _dcPortSet = reinterpret_cast<volatile uint32_t*>(portSetRegister(digitalPinToPort(_dcPin)));
-                _dcPortClear = reinterpret_cast<volatile uint32_t*>(portClearRegister(digitalPinToPort(_dcPin)));
-                _dcPinMask = digitalPinToBitMask(_dcPin);
-            }
-
-            // Configure CS pin
-            if (_csPin >= 0) {
-                *portConfigRegister(_csPin) = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
-                *portModeRegister(_csPin) |= digitalPinToBitMask(_csPin);
-                
-                // Set up CS port manipulation registers
-                _csPort = reinterpret_cast<volatile uint32_t*>(portOutputRegister(digitalPinToPort(_csPin)));
-                _csPortSet = reinterpret_cast<volatile uint32_t*>(portSetRegister(digitalPinToPort(_csPin)));
-                _csPortClear = reinterpret_cast<volatile uint32_t*>(portClearRegister(digitalPinToPort(_csPin)));
-                _csPinMask = digitalPinToBitMask(_csPin);
-                
-                digitalWriteFast(_csPin, HIGH);
-            }
-        #elif defined(__MK20DX256__) // Teensy 3.2
-            //TODO add code for Teensy 3.2
-        #elif defined(__MK20DX128__) // Teensy 3.0
-            //TODO add code for Teensy 3.0
-        #endif
+        //TODO add Teensy support
     #elif defined(ESP32)
         // Configure GPIO matrix for parallel interface
         for (uint8_t i = 0; i < _config.parallel.bus_width; i++) {
@@ -953,52 +576,43 @@ void TFT_Interface_Parallel::setupParallelBus() {
 }
 
 void TFT_Interface_Parallel::cleanupDMA() {
-#if defined(CORE_TEENSY) 
-    #if defined(__IMXRT1062__)
-        if (_flexIO) {
-            delete _flexIO;
-            _flexIO = nullptr;
-        }
-    #elif defined(__IMXRT1062__) || defined(__MK66FX1M0__) || defined(__MK64FX512__)  // Teensy 4.x or 3.6 or 3.5
-        if (_dmaChannel) {
-            _dmaChannel->disable();
-            delete _dmaChannel;
-            _dmaChannel = nullptr;
-        }
-        if (_dmaBuffer1) {
-            free(_dmaBuffer1);
-            _dmaBuffer1 = nullptr;
-        }
-        if (_dmaBuffer2) {
-            free(_dmaBuffer2);
-            _dmaBuffer2 = nullptr;
-        }
-        _currentDmaBuffer = nullptr;
-        _dmaBufferReady = false;
-        
-        // Disable FTM0 DMA request
-        FTM0_C7SC &= ~FTM_CSC_DMA;
-        
-        // Reset port configurations
-        if (_pinsOnSamePort && _dataPort) {
-            *_dataPort &= ~_dataPinMask;  // Clear all data pins
-        }
-        
-        // Reset member pointers
-        _dataPort = nullptr;
-        _dataPortSet = nullptr;
-        _dataPortClr = nullptr;
-        _wrPort = nullptr;
-        _wrPortSet = nullptr;
-        _wrPortClear = nullptr;
-    #endif
-#endif
-    _dmaInitialized = false;
+    if (_dmaInitialized) {
+        #if defined(ESP32)
+            if (_dmadesc) {
+                // Free all DMA descriptors in the linked list
+                lldesc_t* current = _dmadesc;
+                while (current != nullptr) {
+                    lldesc_t* next = current->qe.stqe_next;
+                    heap_caps_free(current);
+                    current = next;
+                }
+                _dmadesc = nullptr;
+            }
+            
+            if (_dmaBuf) {
+                heap_caps_free(_dmaBuf);
+                _dmaBuf = nullptr;
+            }
+            
+            i2s_driver_uninstall(I2S_NUM_0);
+        #elif defined(ARDUINO_ARCH_RP2040)
+            if (_dmaBuf) {
+                free(_dmaBuf);
+                _dmaBuf = nullptr;
+            }
+            if (_dmaChannel >= 0) {
+                dma_channel_abort(_dmaChannel);
+                dma_channel_unclaim(_dmaChannel);
+                _dmaChannel = -1;
+            }
+        #endif
+        _dmaInitialized = false;
+    }
 }
 
 void TFT_Interface_Parallel::waitDMAComplete() {
 #if defined(CORE_TEENSY)
-    #if defined(__IMXRT1062__) || defined(__MK66FX1M0__) || defined(__MK64FX512__)  // Teensy 4.x or 3.6 or 3.5
+    #if defined(__IMXRT1062__) || defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)  // Teensy 4.x or 3.6 or 3.5
         if (_dmaChannel) {
             while (!_dmaChannel->complete()) {
                 yield();

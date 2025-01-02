@@ -7,39 +7,26 @@
 #if defined(ESP32)
     #include "soc/spi_struct.h"
     #include "esp32/rom/lldesc.h"
+    #include "driver/i2s.h"
+    #include "driver/gpio.h"
+    #include "esp_heap_caps.h"
+    #define I2S_PORT I2S_NUM_0  // Define default I2S port for ESP32
 #elif defined(ARDUINO_ARCH_RP2040)
     #include "hardware/pio.h"
     #include "hardware/dma.h"
     #include "hardware/clocks.h"
 #endif
 
-#if defined(CORE_TEENSY)    
-    #include <DMAChannel.h>
-    #if defined(__IMXRT1062__)
-        #include <imxrt.h>
-        #include "FlexIOHandler.h"
-    #elif defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)
-        #include <kinetis.h>
-        #include <core_pins.h>
-    #endif
-#endif
 
 namespace TFT_Runtime {
 
-#if defined(CORE_TEENSY)
-void dmaInterruptHandler(void);  // Forward declaration without namespace qualification
-#endif
 
 class TFT_Interface_Parallel : public TFT_Interface {
 public:
     explicit TFT_Interface_Parallel(const Config& config);
     ~TFT_Interface_Parallel() override;
-
-    #if defined(CORE_TEENSY)
-    friend void dmaInterruptHandler(void);  // Friend declaration without namespace qualification
-    static TFT_Interface_Parallel* getDMAActiveInstance() { return _dmaActiveInstance; }
-    void dmaInterrupt();  // DMA interrupt handler method
-    #endif
+    
+    void dmaInterrupt();  // DMA interrupt handler method - available for all platforms
 
     bool begin() override;
     void writeCommand(uint8_t cmd) override;
@@ -96,23 +83,21 @@ protected:
     void beginSPITransaction();
     void endSPITransaction();
 
-//     // Platform-specific members
-// #if defined(CORE_TEENSY)
-//     #if defined(__IMXRT1062__)
-//         FlexIOHandler* _flexIO;
-//         uint8_t _flexIOShifter;
-//         uint8_t _flexIOTimer;
-//     #elif defined(__MK66FX1M0__) || defined(__MK64FX512__)  // Teensy 3.6/3.5
-//         // volatile uint32_t* _dataPort;       // GPIO port for data pins
-//         // uint32_t _dataPinMask;             // Mask for data pins in the port
-//         // uint32_t _dataPinShift;            // Shift needed to align data pins
-//     #endif
-//     // DMAChannel* _dmaChannel;
-// #endif
-
     // DMA related members
     bool _dmaInitialized;  // Tracks DMA initialization state across platforms
-    // DMAStatus _dmaStatus;
+    bool _dmaBufferReady;
+
+    // Platform-specific DMA members
+#if defined(ESP32)
+    static const size_t DMA_BUFFER_SIZE = 4096;
+    int _dmaChannel;
+    lldesc_t* _dmadesc;
+    uint8_t* _dmaBuf;
+#elif defined(ARDUINO_ARCH_RP2040)
+    PIO _pio;
+    uint _sm;
+    uint _dma_chan;
+#endif
 
 private:
     // Pin configuration
@@ -126,53 +111,6 @@ private:
     bool _is16Bit;
     bool _useLatch;
     uint8_t _writeDelay;
-
-#if defined(CORE_TEENSY) && defined(__IMXRT1062__)
-    // Teensy 4.0/4.1 specific members
-    FlexIOHandler* _flexIO;
-    uint8_t _flexIOShifter;
-    uint8_t _flexIOTimer;
-#endif
-
-#if defined(CORE_TEENSY) && (defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__))
-    // Kinetisk (Teensy 3.x) specific variables for port manipulation
-    volatile uint32_t* _dataPort;
-    volatile uint32_t* _dataPortSet;
-    volatile uint32_t* _dataPortClr;
-    uint32_t _dataPinMask;             // Mask for data pins in the port
-    uint32_t _dataPinShift;            // Shift needed to align data pins
-    volatile uint32_t* _wrPort;
-    volatile uint32_t* _wrPortSet;
-    volatile uint32_t* _wrPortClear;
-    uint8_t _basePort;                 // Base port for data pins
-    bool _pinsOnSamePort;              // Flag indicating if all pins are on same port
-    volatile uint32_t* _rdPort;      // Added for read support
-    volatile uint32_t* _rdPortSet;   // Added for read support
-    volatile uint32_t* _rdPortClear; // Added for read support
-    volatile uint32_t* _dcPort;      // Added for DC pin support
-    volatile uint32_t* _dcPortSet;   // Added for DC pin support
-    volatile uint32_t* _dcPortClear; // Added for DC pin support
-    volatile uint32_t* _csPort;      // Added for CS pin support
-    volatile uint32_t* _csPortSet;   // Added for CS pin support
-    volatile uint32_t* _csPortClear; // Added for CS pin support
-    uint32_t _dataMask;
-    uint32_t _wrPinMask;
-    uint32_t _rdPinMask;            // Added for read support
-    uint32_t _dcPinMask;            // Added for DC pin support
-    uint32_t _csPinMask;            // Added for CS pin support
-    uint8_t _dataShift;
-#endif
-
-    // DMA support
-#if defined(CORE_TEENSY)
-    static TFT_Interface_Parallel* _dmaActiveInstance;
-    DMAChannel* _dmaChannel;
-    uint8_t* _dmaBuffer1;
-    uint8_t* _dmaBuffer2;
-    uint8_t* _currentDmaBuffer;
-    bool _dmaBufferReady;
-    static const size_t DMA_BUFFER_SIZE = 4096;
-#endif
 
     // Viewport management
     int32_t _vpX, _vpY, _vpW, _vpH;

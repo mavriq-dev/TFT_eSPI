@@ -6,10 +6,10 @@
 
 // Platform-specific includes
 #if defined(ESP32)
-    #include "soc/spi_struct.h"
-    #include "esp32/rom/lldesc.h"
-    #include "soc/spi_reg.h"
     #include "driver/spi_master.h"
+    #include "soc/spi_struct.h"
+    #include "soc/spi_reg.h"
+    #include "esp32/rom/lldesc.h"
 #elif defined(ARDUINO_ARCH_RP2040)
     #include "hardware/spi.h"
     #include "hardware/dma.h"
@@ -21,6 +21,17 @@
     #include <DMAChannel.h>
     #if defined(__IMXRT1062__)
         #include <imxrt.h>
+        #include <core_pins.h>
+
+        #ifndef LPSPI_CCR_SCKDIV_MASK
+        #define LPSPI_CCR_SCKDIV_MASK    (0xFF << 24)
+        #define LPSPI_CCR_SCKDIV(n)      (((n) & 0xFF) << 24)
+
+        #ifndef LPSPI_CR_MDIS
+            #define LPSPI_CR_MDIS    (1<<14)  // Module Disable
+        #endif
+    #endif
+
         extern "C" void dmaInterruptHandler(void);  // Forward declaration
     #elif defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)
         #include <core_pins.h>
@@ -28,7 +39,6 @@
         void dma_ch_isr(void);  // Forward declaration
     #endif
 #endif
-
 
 namespace TFT_Runtime {
 
@@ -113,6 +123,15 @@ protected:
     void endSPITransaction();
     void setupFIFO();  // Setup FIFO for Teensy 3.6
 
+    // ESP32 specific members
+    #if defined(ESP32)
+        static constexpr size_t TFT_DMA_MAX_BLOCK_SIZE = 32768;
+        spi_host_device_t _spi_host;  // VSPI_HOST or HSPI_HOST
+        spi_device_handle_t _spi_handle;
+        lldesc_t* _dmadesc;
+        spi_bus_config_t _spi_bus_config;
+        spi_device_interface_config_t _spi_device_config;
+    #endif
 
     // DMA related members
     bool _dmaInitialized;  // Tracks DMA initialization state across platforms
@@ -134,31 +153,17 @@ private:
     SPIClass* _spi;
     bool _hwSPI;
 
-    // Platform-specific members
-    #if defined(ESP32)
-    spi_device_handle_t _spi_handle;
-    lldesc_t* _dmadesc;
+
+
+    // SPI DMA related registers - used by multiple platforms
+    volatile uint32_t* _spiBaseReg;  // Base register for SPI
+    volatile uint32_t* _spiSR;       // Status register
+    volatile uint32_t* _spiDR;       // Data register
+    volatile uint32_t* _spiMCR;      // Module configuration register
+    uint32_t _dmaBufSize;
     uint8_t* _dmaBuf;
-    #elif defined(ARDUINO_ARCH_RP2040)
-    spi_inst_t* _spi_inst;
-    int _dma_tx;
-    int _dma_rx;
-    #elif defined(CORE_TEENSY)
-        #if defined(__IMXRT1062__)  // Teensy 4.0
-            IMXRT_LPSPI_t* _pimxrt_spi;  // For backwards compatibility
-            IMXRT_LPSPI_t* _lpspi_base;  // Current active LPSPI base
-        #elif defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)  // Teensy 3.x series
-            
-            uint32_t _dmaBufSize;
-            uint8_t* _dmaBuf;
-            size_t _dmaRemaining;  // Track remaining bytes to transfer
-            size_t _dmaSent;      // Track bytes already sent
-            volatile uint32_t* _spiBaseReg;  // Base register for SPI
-            volatile uint32_t* _spiSR;       // Status register
-            volatile uint32_t* _spiDR;       // Data register
-            volatile uint32_t* _spiMCR;      // Module configuration register
-        #endif
-    #endif
+    size_t _dmaRemaining;  // Track remaining bytes to transfer
+    size_t _dmaSent;      // Track bytes already sent
 
     // Viewport management
     int32_t _vpX, _vpY, _vpW, _vpH;
