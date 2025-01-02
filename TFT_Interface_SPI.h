@@ -16,24 +16,22 @@
     #include "hardware/clocks.h"
 #endif
 
-#if defined(CORE_TEENSY) && defined(__IMXRT1062__)
-    #include <imxrt.h>
+#if defined(CORE_TEENSY) 
+    DMAChannel* _dmaChannel;
     #include <DMAChannel.h>
-#elif defined(CORE_TEENSY) && defined(__MK66FX1M0__)  // Teensy 3.6
-    // #include <imxrt.h>
-    #include <DMAChannel.h>
-    #include <core_pins.h>
-    #include <kinetis.h>
-#elif defined(CORE_TEENSY)
-    #include <imxrt.h>
-    #include <DMAChannel.h>
-    #if defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)
+    #if defined(__IMXRT1062__)
+        #include <imxrt.h>
+        extern "C" void dmaInterruptHandler(void);  // Forward declaration
+    #elif defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)
         #include <core_pins.h>
         #include <kinetis.h>
+        void dma_ch_isr(void);  // Forward declaration
     #endif
 #endif
 
+
 namespace TFT_Runtime {
+
 
 class TFT_Interface_SPI : public TFT_Interface {
 public:
@@ -47,12 +45,27 @@ public:
         DMA_COMPLETE
     };
 
+    // #if defined(CORE_TEENSY)
+    //     #if defined(__IMXRT1062__)
+    //     friend void ::dmaInterruptHandler(void);
+    //     #elif defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)
+    //     friend void ::dma_ch_isr(void);
+    //     #endif
+    // #endif
+
     // Static instance pointer for interrupt handling
     static TFT_Interface_SPI* _instance;
 
     // Public method for DMA completion handling
     void notifyDMAComplete() {
         _dmaStatus = DMA_COMPLETE;
+    }
+
+    // Static DMA handler method
+    static void dmaInterruptHandler() {
+        if (_instance) {
+            _instance->notifyDMAComplete();
+        }
     }
 
     bool begin() override;
@@ -98,9 +111,8 @@ protected:
     void setSPISettings();
     void beginSPITransaction();
     void endSPITransaction();
-    #if defined(__MK66FX1M0__)
     void setupFIFO();  // Setup FIFO for Teensy 3.6
-    #endif
+
 
     // DMA related members
     bool _dmaInitialized;  // Tracks DMA initialization state across platforms
@@ -127,27 +139,25 @@ private:
     spi_device_handle_t _spi_handle;
     lldesc_t* _dmadesc;
     uint8_t* _dmaBuf;
-    bool _dmaInitialized;
     #elif defined(ARDUINO_ARCH_RP2040)
     spi_inst_t* _spi_inst;
-    uint _dma_tx;
-    uint _dma_rx;
-    bool _dmaInitialized;
+    int _dma_tx;
+    int _dma_rx;
     #elif defined(CORE_TEENSY)
-    #if defined(__IMXRT1062__)
-    DMAChannel* _dmaChannel;
-    bool _dmaInitialized;
-    #elif defined(__MK66FX1M0__)  // Teensy 3.6
-    DMAChannel* _dmaChannel;
-    uint32_t _dmaBufSize;
-    uint8_t* _dmaBuf;
-    size_t _dmaRemaining;  // Track remaining bytes to transfer
-    size_t _dmaSent;      // Track bytes already sent
-    volatile uint32_t* _spiBaseReg;  // Base register for SPI
-    volatile uint32_t* _spiSR;       // Status register
-    volatile uint32_t* _spiDR;       // Data register
-    volatile uint32_t* _spiMCR;      // Module configuration register
-    #endif
+        #if defined(__IMXRT1062__)  // Teensy 4.0
+            IMXRT_LPSPI_t* _pimxrt_spi;  // For backwards compatibility
+            IMXRT_LPSPI_t* _lpspi_base;  // Current active LPSPI base
+        #elif defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)  // Teensy 3.x series
+            
+            uint32_t _dmaBufSize;
+            uint8_t* _dmaBuf;
+            size_t _dmaRemaining;  // Track remaining bytes to transfer
+            size_t _dmaSent;      // Track bytes already sent
+            volatile uint32_t* _spiBaseReg;  // Base register for SPI
+            volatile uint32_t* _spiSR;       // Status register
+            volatile uint32_t* _spiDR;       // Data register
+            volatile uint32_t* _spiMCR;      // Module configuration register
+        #endif
     #endif
 
     // Viewport management

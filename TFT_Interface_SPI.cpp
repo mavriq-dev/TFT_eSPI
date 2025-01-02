@@ -1,23 +1,26 @@
 #include "TFT_Interface_SPI.h"
 #include <Arduino.h>
 
-// DMA Interrupt Handlers for different platforms
-static void _dmaInterruptHandler() {
-    #if defined(CORE_TEENSY)
-        #if defined(__MK66FX1M0__)  // Teensy 3.6
-            if (TFT_Runtime::TFT_Interface_SPI::_instance) {
-                TFT_Runtime::TFT_Interface_SPI::_instance->notifyDMAComplete();
-            }
-        #endif
+#if defined(CORE_TEENSY)
+    #if defined(__IMXRT1062__)
+    // Teensy 4.x DMA interrupt handler is defined by the core library
+    extern "C" void dmaInterruptHandler(void);
     #endif
-
-}
-
+#endif
 
 namespace TFT_Runtime {
 
 // Initialize static member
 TFT_Interface_SPI* TFT_Interface_SPI::_instance = nullptr;
+
+#if defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)
+    // Teensy 3.x DMA interrupt handler
+    void dma_ch_isr(void) {
+        if (TFT_Runtime::TFT_Interface_SPI::_instance) {
+            TFT_Runtime::TFT_Interface_SPI::_instance->notifyDMAComplete();
+        }
+    }
+#endif
 
 TFT_Interface_SPI::TFT_Interface_SPI(const Config& config) : TFT_Interface(config) 
 
@@ -53,6 +56,8 @@ TFT_Interface_SPI::TFT_Interface_SPI(const Config& config) : TFT_Interface(confi
     #elif defined(CORE_TEENSY) && defined(__IMXRT1062__)
         _dmaChannel = nullptr;
         _dmaInitialized = false;
+        _pimxrt_spi = &IMXRT_LPSPI4_S;  // Initialize SPI hardware registers pointer
+        _lpspi_base = nullptr;
     #elif defined(CORE_TEENSY) && defined(__MK66FX1M0__)
         _dmaChannel = nullptr;
         _dmaInitialized = false;
@@ -107,10 +112,10 @@ void TFT_Interface_SPI::write8(uint8_t data) {
         while(!(SPSR & _BV(SPIF)));
     #elif defined(CORE_TEENSY)
         #if defined(__IMXRT1062__)  // Teensy 4.0
-            while ((_pimxrt_spi->SR & LPSPI_SR_TDF) == 0);
-            _pimxrt_spi->TDR = data;
-            while ((_pimxrt_spi->SR & LPSPI_SR_TCF) == 0);
-            _pimxrt_spi->SR = LPSPI_SR_TCF;
+            while ((_lpspi_base->SR & LPSPI_SR_TDF) == 0);
+            _lpspi_base->TDR = data;
+            while ((_lpspi_base->SR & LPSPI_SR_TCF) == 0);
+            _lpspi_base->SR = LPSPI_SR_TCF;
         #elif defined(__MK66FX1M0__)  // Teensy 3.6
             // Wait if FIFO is full
             while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
@@ -162,10 +167,10 @@ void TFT_Interface_SPI::write16(uint16_t data) {
         while(!(SPSR & _BV(SPIF)));
     #elif defined(CORE_TEENSY)
         #if defined(__IMXRT1062__)  // Teensy 4.0
-            while ((_pimxrt_spi->SR & LPSPI_SR_TDF) == 0);
-            _pimxrt_spi->TDR = data;
-            while ((_pimxrt_spi->SR & LPSPI_SR_TCF) == 0);
-            _pimxrt_spi->SR = LPSPI_SR_TCF;
+            while ((_lpspi_base->SR & LPSPI_SR_TDF) == 0);
+            _lpspi_base->TDR = data;
+            while ((_lpspi_base->SR & LPSPI_SR_TCF) == 0);
+            _lpspi_base->SR = LPSPI_SR_TCF;
         #elif defined(__MK66FX1M0__)  // Teensy 3.6
             // Wait if FIFO is full
             while (!(KINETISK_SPI0.SR & SPI_SR_TFFF));
@@ -315,13 +320,48 @@ void TFT_Interface_SPI::initDMA() {
         _dmaChannel = new DMAChannel();
         if (_dmaChannel) {
             _dmaChannel->disable();
-            _dmaChannel->destination(IMXRT_LPSPI4_S.TDR);
-            _dmaChannel->disableOnCompletion();
-            _dmaChannel->triggerAtHardwareEvent(DMAMUX_SOURCE_LPSPI4_TX);
+            
+            // Get the correct LPSPI base based on which SPI bus we're using
+            IMXRT_LPSPI_t* lpspi_base = nullptr;
+            uint8_t dmamux_source = 0;
+            
+            if (_spi == &SPI) {
+                lpspi_base = &IMXRT_LPSPI4_S;
+                dmamux_source = DMAMUX_SOURCE_LPSPI4_TX;
+            } else if (_spi == &SPI1) {
+                lpspi_base = &IMXRT_LPSPI3_S;
+                dmamux_source = DMAMUX_SOURCE_LPSPI3_TX;
+            } else if (_spi == &SPI2) {
+                lpspi_base = &IMXRT_LPSPI1_S;
+                dmamux_source = DMAMUX_SOURCE_LPSPI1_TX;
+            }
+            
+            if (lpspi_base) {
+                // Configure DMA for optimal performance
+                _dmaChannel->destination(lpspi_base->TDR);
+                _dmaChannel->disableOnCompletion();
+                _dmaChannel->triggerAtHardwareEvent(dmamux_source);
+                _dmaChannel->interruptAtCompletion();
+                _dmaChannel->attachInterrupt(::dmaInterruptHandler);
+                
+                // Configure LPSPI for optimal DMA operation
+                lpspi_base->CR = LPSPI_CR_MEN | LPSPI_CR_RRF | LPSPI_CR_RTF; // Reset FIFOs
+                lpspi_base->CFGR1 = LPSPI_CFGR1_MASTER | LPSPI_CFGR1_SAMPLE | 
+                                   (0 << 24) | // SPI with separate MOSI/MISO (PINCFG)
+                                   (0 << 16) | // Output trigger disabled (OUTCFG)
+                                   LPSPI_CFGR1_NOSTALL;    // Prevent stall
+                lpspi_base->FCR = LPSPI_FCR_TXWATER(0);   // Set TX FIFO watermark to 0
+                lpspi_base->DER = LPSPI_DER_TDDE;         // Enable DMA on transmit
+                lpspi_base->TCR = LPSPI_TCR_RXMSK;        // Mask RX data
+                
+                // Clear all status flags
+                lpspi_base->SR = 0x3F00;
+                
+                _lpspi_base = lpspi_base;
+                _dmaInitialized = true;
+            }
         }
-        _dmaInitialized = (_dmaChannel != nullptr);
-        
-    #elif defined(__MK66FX1M0__)  // Teensy 3.6
+    #elif defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)  // Teensy 3.x
         _dmaChannel = new DMAChannel();
         if (_dmaChannel) {
             _dmaChannel->disable();
@@ -333,6 +373,7 @@ void TFT_Interface_SPI::initDMA() {
             _dmaChannel->transferSize(4); // Use 32-bit transfers for better performance
             _dmaChannel->transferCount(1); // Will be updated in startDMAWrite
             _dmaChannel->interruptAtCompletion();
+            _dmaChannel->attachInterrupt(::dma_ch_isr);
             
             // Set up SPI registers for DMA
             _spiBaseReg = &SPI0_SR;
@@ -352,15 +393,7 @@ void TFT_Interface_SPI::initDMA() {
             // Configure for optimal DMA operation
             SPI0_RSER = SPI_RSER_TFFF_RE | SPI_RSER_TFFF_DIRS; // Enable DMA request on TFFF
             
-            // Set optimal FIFO watermarks
-            SPI0_MCR &= ~(SPI_MCR_DIS_TXF | SPI_MCR_DIS_RXF);
-            SPI0_RSER |= SPI_RSER_TFFF_RE | SPI_RSER_TFFF_DIRS;
-            
-            _dmaStatus = DMA_INACTIVE;
             _dmaInitialized = true;
-            
-            // Attach optimized interrupt handler
-            _dmaChannel->attachInterrupt(_dmaInterruptHandler);
         }
     #endif
 #endif
@@ -369,17 +402,24 @@ void TFT_Interface_SPI::initDMA() {
 bool TFT_Interface_SPI::startDMAWrite(const uint8_t* data, size_t len) {
 #if defined(CORE_TEENSY)
     #if defined(__IMXRT1062__)  // Teensy 4.0
-        if (_dmaInitialized && len >= 32) {
+        if (_dmaInitialized && len >= 16) { // Reduced minimum size for DMA
             // Optimize DMA settings for the transfer
             _dmaChannel->disable();
-            _dmaChannel->sourceBuffer((volatile uint8_t*)data, len);
-            _dmaChannel->destination(IMXRT_LPSPI4_S.TDR);
+            
+            // Configure for optimal burst transfers
+            size_t transferSize = (len + 3) & ~3; // Round up to nearest multiple of 4
+            _dmaChannel->sourceBuffer((volatile uint8_t*)data, transferSize);
             _dmaChannel->transferSize(4); // Use 32-bit transfers
-            _dmaChannel->transferCount(len / 4);
+            _dmaChannel->transferCount(transferSize / 4);
             
-            // Enable TCR optimization for continuous transfer
-            IMXRT_LPSPI4_S.TCR = LPSPI_TCR_CONT;
+            // Optimize LPSPI settings for the transfer
+            _lpspi_base->TCR = LPSPI_TCR_CONT | LPSPI_TCR_RXMSK; // Continuous transfer, ignore RX
+            _lpspi_base->CFGR1 |= LPSPI_CFGR1_NOSTALL; // Prevent stalling
             
+            // Clear status before starting
+            _lpspi_base->SR = 0x3F00;
+            
+            _dmaStatus = DMA_ACTIVE;
             _dmaChannel->enable();
             return true;
         }
@@ -418,7 +458,7 @@ void TFT_Interface_SPI::cleanupDMA() {
     if (_dmaChannel) {
         _dmaChannel->disable();
         // Reset TCR
-        IMXRT_LPSPI4_S.TCR = 0;
+        _lpspi_base->TCR = 0;
         delete _dmaChannel;
         _dmaChannel = nullptr;
     }
@@ -439,7 +479,7 @@ void TFT_Interface_SPI::waitDMAComplete() {
             asm volatile("wfi");
         }
         // Reset TCR after transfer
-        IMXRT_LPSPI4_S.TCR = 0;
+        _lpspi_base->TCR = 0;
         _dmaChannel->clearComplete();
     }
 #elif defined(__MK66FX1M0__)
@@ -468,6 +508,7 @@ bool TFT_Interface_SPI::init() {
                 _dmaChannel->transferCount(1);
                 _dmaChannel->disableOnCompletion();
                 _dmaChannel->interruptAtCompletion();
+                _dmaChannel->attachInterrupt(::dmaInterruptHandler);
                 
                 // Enable FLEXIO for faster GPIO operations
                 CCM_CCGR5 |= (3 << 6);  // FLEXIO2 clock gate, set to 11 (always enabled)
@@ -497,21 +538,22 @@ void TFT_Interface_SPI::setupFIFO() {
     #if defined(CORE_TEENSY)
         #if defined(__MK66FX1M0__) || defined(__MK64FX512__) || defined(__MK20DX256__) || defined(__MK20DX128__)
             // Teensy 3.x series specific FIFO setup
-            uint32_t mcr = *_spiMCR;
-            mcr &= ~SPI_MCR_MDIS;
-            *_spiMCR = mcr;
+            if (_spiMCR) {  // Check if the register pointer is valid
+                uint32_t mcr = *_spiMCR;
+                mcr &= ~SPI_MCR_MDIS;
+                *_spiMCR = mcr;
 
-            // Configure FIFO watermarks - using direct register access
-            // These definitions should be provided by kinetis.h
-            #if defined(SPI_RSER_TFFF_RE)
-                uint32_t rser = SPI0_RSER;
-                rser &= ~(SPI_RSER_TFFF_RE | SPI_RSER_RFDF_RE | 
-                         SPI_RSER_TFFF_DIRS | SPI_RSER_RFDF_DIRS);
-                SPI0_RSER = rser;
-            #endif
-        #elif defined(ARDUINO_TEENSY40) || defined(ARDUINO_TEENSY41)
-            // Teensy 4.x specific FIFO setup if needed
-            // Currently no specific FIFO setup needed
+                // Configure FIFO watermarks - using direct register access
+                // These definitions should be provided by kinetis.h
+                #if defined(SPI_CTAR_FMSZ)  // Only if FIFO is supported on this device
+                    if (_spiBaseReg) {
+                        // Set FIFO watermarks for optimal performance
+                        *(_spiBaseReg + 0x1C/4) = SPI_RSER_RFDF_RE | SPI_RSER_RFDF_DIRS; // Enable FIFO
+                        *(_spiBaseReg + 0x20/4) = 0; // Clear status
+                        *(_spiBaseReg + 0x24/4) = 0; // Use default watermarks
+                    }
+                #endif
+            }
         #endif
     #endif
 }
