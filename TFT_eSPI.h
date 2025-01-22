@@ -32,6 +32,8 @@
 #if !defined (TFT_PARALLEL_8_BIT) && !defined (RP2040_PIO_INTERFACE)
   #include <SPI.h>
 #endif
+
+extern "C" uint8_t external_psram_size __attribute__((weak));
 /***************************************************************************************
 **                         Section 2: Load library and processor specific header files
 ***************************************************************************************/
@@ -40,6 +42,8 @@
 #ifdef CONFIG_TFT_eSPI_ESPIDF
   #include "TFT_config.h"
 #endif
+
+
 
 // New ESP8266 board package uses ARDUINO_ARCH_ESP8266
 // old package defined ESP8266

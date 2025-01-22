@@ -474,9 +474,10 @@ TFT_eSPI::TFT_eSPI(int16_t w, int16_t h)
   fs_font  = true;     // Smooth font filing system or array (fs_font = false) flag
 #endif
 
-#if defined (ESP32) && defined (CONFIG_SPIRAM_SUPPORT)
-  if (psramFound()) _psram_enable = true; // Enable the use of PSRAM (if available)
-  else
+#if defined(__IMXRT1062__)  // Teensy 4.x
+    if (&external_psram_size && external_psram_size > 0) _psram_enable = true;
+#elif defined(ESP32) && defined(CONFIG_SPIRAM_SUPPORT)
+    if (psramFound()) _psram_enable = true;
 #endif
   _psram_enable = false;
 
